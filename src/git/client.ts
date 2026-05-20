@@ -64,15 +64,102 @@ export async function hasNoNewPatchChanges(upstream: string, head: string, conte
   })
 
   if (result.exitCode === 0) {
-    return !result.stdout
-      .split('\n')
-      .some((line: string) => line.startsWith('+'))
+    return !result.stdout.split('\n').some((line: string) => line.startsWith('+'))
   }
 
   throw new CliError(`无法比较补丁等价关系: ${upstream} / ${head}`, {
     exitCode: result.exitCode || 1,
     details: compactOutput(result.all),
     next: ['确认远程 MR 分支已 fetch，并且本地仓库历史完整。'],
+  })
+}
+
+export async function hasSameReplayedCommitSeries(
+  leftBase: string,
+  leftHead: string,
+  rightBase: string,
+  rightHead: string,
+  context: any,
+) {
+  const left = await getReplayCommitSignatures(leftBase, leftHead, context)
+  const right = await getReplayCommitSignatures(rightBase, rightHead, context)
+
+  return left.length > 0 && left.length === right.length && left.every((signature, index) => signature === right[index])
+}
+
+export async function hasNoUncontestedTreeChanges(
+  forkPoint: string,
+  targetBranch: string,
+  currentBranch: string,
+  mrBranch: string,
+  context: any,
+) {
+  const currentPaths = await getChangedPaths(forkPoint, currentBranch, context)
+  const targetPaths = new Set(await getChangedPaths(forkPoint, targetBranch, context))
+  const uncontestedPaths = currentPaths.filter((path) => !targetPaths.has(path))
+
+  if (!uncontestedPaths.length) {
+    return true
+  }
+
+  const result = await git(['diff', '--quiet', currentBranch, mrBranch, '--', ...uncontestedPaths], context, {
+    quiet: true,
+    allowFailure: true,
+  })
+
+  if (result.exitCode === 0) {
+    return true
+  }
+
+  if (result.exitCode === 1) {
+    return false
+  }
+
+  throw new CliError(`无法比较未冲突路径内容: ${currentBranch} / ${mrBranch}`, {
+    exitCode: result.exitCode || 1,
+    details: compactOutput(result.all),
+    next: ['确认当前分支和远程 MR 分支历史完整后重试。'],
+  })
+}
+
+async function getReplayCommitSignatures(base: string, head: string, context: any): Promise<string[]> {
+  const result = await git(
+    ['log', '--reverse', '--topo-order', '--no-merges', '--format=%aI%x1f%an%x1f%ae%x1f%B%x1e', `${base}..${head}`],
+    context,
+    {
+      quiet: true,
+      allowFailure: true,
+    },
+  )
+
+  if (result.exitCode !== 0) {
+    throw new CliError(`无法读取提交序列: ${base}..${head}`, {
+      exitCode: result.exitCode || 1,
+      details: compactOutput(result.all),
+      next: ['确认分支和远程引用已 fetch，并且本地仓库历史完整。'],
+    })
+  }
+
+  return result.stdout
+    .split('\x1e')
+    .map((record: string) => record.replace(/^\n+|\n+$/gu, ''))
+    .filter(Boolean)
+}
+
+async function getChangedPaths(base: string, head: string, context: any): Promise<string[]> {
+  const result = await git(['diff', '--name-only', '-z', base, head], context, {
+    quiet: true,
+    allowFailure: true,
+  })
+
+  if (result.exitCode === 0) {
+    return result.stdout.split('\0').filter(Boolean)
+  }
+
+  throw new CliError(`无法读取变更路径: ${base}..${head}`, {
+    exitCode: result.exitCode || 1,
+    details: compactOutput(result.all),
+    next: ['确认分支和远程引用已 fetch，并且本地仓库历史完整。'],
   })
 }
 

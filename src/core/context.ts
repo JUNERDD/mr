@@ -4,8 +4,13 @@ type ContextOptions = {
   color?: boolean
   dryRun?: boolean
   env?: NodeJS.ProcessEnv
+  merge?: boolean
+  mergeTarget?: boolean
   quiet?: boolean
+  pr?: boolean
+  rebase?: boolean
   spinner?: boolean
+  strategy?: string
   ui?: ReturnType<typeof createUi>
   verbose?: boolean
 }
@@ -28,6 +33,12 @@ export function createContext(options: ContextOptions = {}) {
 
   return {
     dryRun: Boolean(options.dryRun),
+    env: options.env ?? process.env,
+    merge: Boolean(options.merge),
+    mergeTarget: Boolean(options.mergeTarget),
+    pr: Boolean(options.pr),
+    rebase: Boolean(options.rebase),
+    strategy: options.strategy,
     verbose,
     ui,
   }

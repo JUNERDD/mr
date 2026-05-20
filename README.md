@@ -19,6 +19,7 @@ mrp # prerelease
 
 ```sh
 mr test --dry-run       # 只看计划，不修改本地或远程状态
+mr test --pr            # 直接用当前分支创建到 test 的 PR，不创建 mr/* 分支
 mr test --verbose       # 输出实际执行的 git 命令和完整输出
 mr test --quiet         # 只输出错误
 mr test --no-color      # 禁用颜色，适合日志和无障碍场景
@@ -60,12 +61,17 @@ curl -fsSL https://raw.githubusercontent.com/JUNERDD/mr/main/uninstall.sh | bash
 本地开发时，也可以在当前目录执行：
 
 ```sh
+nvm use
 npm install
+npm run fix
+npm run check
 npm run build
 npm link
 ```
 
 `npm link` 使用的是 `dist/index.js`，也就是 TypeScript 源码经构建工具转换并压缩后的版本。
+`npm run fix` 是一键修复入口，会先用 Oxfmt 格式化，再用 Oxlint 应用安全 lint fix。
+`npm run check` 是本地和 CI 共用的质量门禁，会依次执行 Oxfmt 格式检查、Oxlint、TypeScript strict typecheck、Vitest、tsdown build 和 `node --check dist/index.js`。
 
 如果要用当前工作区源码打一个本地预构建包，并覆盖本机已安装的 `mr`：
 
@@ -89,13 +95,85 @@ curl -fsSL https://raw.githubusercontent.com/JUNERDD/mr/main/install.sh | bash
 ## 行为
 
 - 当前分支已经合入目标分支：直接退出，不创建 PR。
-- 远程 MR 分支已匹配当前分支的等价改动，且已经基于目标分支：只创建 PR。
-- 远程 MR 分支不存在、已过期或已合入目标分支：从当前分支重建 MR 分支，再把 MR 分支 rebase 到目标分支。
-- MR 分支使用 `git push --force-with-lease` 更新；真实业务分支不会被 rebase、merge 或强推。
-- rebase 冲突：处于 MR 分支的待解决冲突状态；解决后 `git add <files> && git rebase --continue && git push --force-with-lease origin HEAD:<mr-branch>`。
+- 默认等同于 `--merge`：从目标分支准备 MR 分支，再把当前分支 merge 进去。
+- 远程 MR 分支已存在：统一复用已有 MR 分支，合入当前分支并同步目标分支。
+- 远程 MR 分支不存在：按所选策略准备新的 MR 分支。
+- `--pr`：不创建 `mr/*` 分支，直接推送当前分支并用当前分支创建到目标分支的 PR。
+- merge 冲突：处于 MR 分支的待解决冲突状态；解决后 `git add <files>`，再重新运行 `mr <target>` / `mrt` 提交合并结果、推送并创建 PR。
+- `--rebase`：从当前分支准备 MR 分支，再 rebase 到目标分支。
+- `--merge-target`：从当前分支准备 MR 分支，再把目标分支 merge 进去。
+- `--pr` 和三种 MR 分支策略都适用于 `mr` 交互式选择、`mrm`、`mrt`、`mrp` 和 `mr <target>`；也可通过 `git config mr.strategy pr|merge|rebase|merge-target` 或 `MR_STRATEGY=...` 设置默认策略。
 - 其他中途失败：自动尝试回到初始分支。
 - 默认要求 tracked 工作区干净，避免切换分支时带入未提交改动。
 - 进度、诊断和错误写到 stderr，命令输出不会污染管道中的 stdout。
+
+## 分支逻辑图
+
+图中 `B` 是当前业务分支，`T` 是目标分支，例如 `test`，`M` 是生成的 MR 分支 `mr/<T>/<B>`。
+
+```mermaid
+flowchart TD
+  A["执行 mr*<br/>mr / mrm / mrt / mrp / mr &lt;target&gt;"] --> B["解析目标分支 T<br/>mrm=master, mrt=test, mrp=prerelease"]
+  B --> C["解析策略<br/>--pr 或默认 / --merge / --rebase / --merge-target<br/>git config mr.strategy 也可设置默认"]
+  C --> D["要求 tracked 工作区干净<br/>fetch origin/T"]
+  D --> E{"当前是否处于 M 的<br/>未完成 merge/rebase 状态?"}
+
+  E -- "是: merge 状态" --> F["用户已解决冲突并 git add 后<br/>重新执行 mr*"]
+  F --> G["git commit --no-edit<br/>push M<br/>确认 PR"]
+
+  E -- "是: rebase 状态" --> H["用户已解决冲突并 git add 后<br/>重新执行 mr*"]
+  H --> I["git rebase --continue<br/>push --force-with-lease M<br/>确认 PR"]
+
+  E -- "否" --> J{"B 是否已经合入 origin/T?"}
+  J -- "是" --> K["无需操作<br/>不创建 PR"]
+  J -- "否" --> PR{"是否 --pr?"}
+
+  PR -- "是" --> PR1["push 当前分支 B"]
+  PR1 --> PR2["确认 PR<br/>git cnb pull create -H B -B T"]
+  PR2 --> U
+
+  PR -- "否" --> L{"远程 MR 分支<br/>origin/M 是否存在?"}
+
+  L -- "存在" --> M1["统一复用 origin/M<br/>不按策略重建"]
+  M1 --> M2["git switch -C M origin/M"]
+  M2 --> M3["merge B<br/>把当前业务改动合入已有 MR 分支"]
+  M3 --> C1{"冲突?"}
+  C1 -- "否" --> M4["merge origin/T<br/>同步目标分支"]
+  C1 -- "是" --> Y
+  M4 --> C2{"冲突?"}
+  C2 -- "否" --> P["push M"]
+  C2 -- "是" --> Y
+
+  L -- "不存在" --> N{"所选策略"}
+  N -- "--merge 或默认" --> O1["git push origin HEAD:M<br/>先创建远程 MR 入口"]
+  O1 --> O2["git switch -C M origin/T"]
+  O2 --> O3["merge B<br/>从目标分支合入当前业务分支"]
+  O3 --> C3{"冲突?"}
+  C3 -- "否" --> P
+  C3 -- "是" --> Y
+
+  N -- "--rebase" --> R1["git switch -C M B"]
+  R1 --> R2["git rebase --onto origin/T<br/>把业务提交重放到目标分支上"]
+  R2 --> C4{"冲突?"}
+  C4 -- "否" --> R3["push --force-with-lease M"]
+  C4 -- "是" --> Y
+  R3 --> Q
+
+  N -- "--merge-target" --> S1["git switch -C M B"]
+  S1 --> S2["merge origin/T<br/>从当前业务分支合入目标分支"]
+  S2 --> C5{"冲突?"}
+  C5 -- "否" --> S3["push --force-with-lease M"]
+  C5 -- "是" --> Y
+  S3 --> Q
+
+  P --> Q["确认 PR<br/>git cnb pull create -H M -B T"]
+  Q --> U{"PR 创建是否成功?"}
+  U -- "成功" --> V["完成<br/>切回 B"]
+  U -- "失败，通常是 PR 已存在" --> W["不阻断<br/>MR 分支已推送，直接完成并切回 B"]
+
+  Y["停在 M 的冲突状态<br/>手动解决冲突并 git add"]
+  Y --> Z["重新执行同一个 mr* 命令<br/>自动继续 commit 或 rebase"]
+```
 
 ## UI / DX
 
@@ -105,6 +183,7 @@ curl -fsSL https://raw.githubusercontent.com/JUNERDD/mr/main/install.sh | bash
 - `mr uninstall` 会执行已安装的 `uninstall.sh`，删除命令链接、安装目录和 shell 配置片段。
 - `--version` 输出当前版本。
 - `--dry-run` 展示可能执行的 git / CNB 命令，不修改本地分支、远程分支或创建合并请求。
+- `--pr`、`--merge`、`--rebase`、`--merge-target` 可临时覆盖 `mr.strategy` 配置。
 - 默认输出只保留关键步骤；`--verbose` 才展示完整命令和完整输出。
 - 错误会给出可执行的下一步，例如缺少依赖、目标分支不存在、工作区不干净或合并冲突。
 - 颜色遵循 `NO_COLOR`、`MR_NO_COLOR`、`FORCE_COLOR`、`TERM=dumb` 和 `--no-color` / `--color`。
@@ -118,7 +197,7 @@ curl -fsSL https://raw.githubusercontent.com/JUNERDD/mr/main/install.sh | bash
 
 ## 工程结构
 
-源码使用 TypeScript/TSX，按职责拆分到目录，并通过测试约束每个 `src/**/*.ts(x)` 不超过 300 行。发布入口是 `src/index.ts`，构建产物是压缩后的 `dist/index.js`、`dist/commands/*.js` 和共享 chunks：
+源码使用 TypeScript/TSX，按职责拆分到目录，并通过测试约束每个 `src/**/*.ts(x)` 不超过 300 行。发布入口是 `src/index.ts`，构建由 tsdown/Rolldown 输出压缩后的 `dist/index.js`、`dist/commands/*.js` 和共享 chunks：
 
 - `src/index.ts`：构建入口和兜底错误输出。
 - `src/commands/`：Pastel command、Zod 参数/选项 schema 和 React/Ink 命令组件。
@@ -128,7 +207,10 @@ curl -fsSL https://raw.githubusercontent.com/JUNERDD/mr/main/install.sh | bash
 - `src/ui/`：终端输出、颜色、动画策略和 Ink `mr` 键盘交互选择。
 - `src/core/`：dry-run、目标分支、格式化、错误等可测试纯逻辑。
 - `test/`：Vitest 单元测试。
-- `build.mjs`：esbuild 构建脚本，输出 bundled + minified + code-splitting 的 Pastel 可发现命令目录。
+- `.oxfmtrc.json`：Oxfmt 格式化配置，作为 `npm run check` 的第一道质量门禁。
+- `.oxlintrc.json`：Oxlint 配置，用于快速静态检查 TypeScript、Node 和 Vitest 代码。
+- `vitest.config.ts`：Vitest 配置；Git 集成测试会修改进程级 cwd/env，因此测试文件串行执行并使用更高超时。
+- `tsdown.config.ts`：tsdown 构建配置，输出 bundled + minified + code-splitting 的 Pastel 可发现命令目录，并保留 `dist/index.js` 可执行权限。
 - `scripts/package-release.sh`：把 `dist/`、`package.json`、`README.md`、`install.sh`、`uninstall.sh` 打包成安装脚本使用的 release 产物。
 
 ## CI/CD
@@ -136,7 +218,7 @@ curl -fsSL https://raw.githubusercontent.com/JUNERDD/mr/main/install.sh | bash
 GitHub Actions 会在 PR 和 `main` 推送时执行：
 
 - `npm ci`
-- `npm run check`
+- `npm run check`，包括 Oxfmt、Oxlint、TypeScript strict typecheck、Vitest、tsdown build 和 dist 语法检查
 - `npm run pack:release`
 - 解压 `artifacts/mr.tar.gz` 并执行 `dist/index.js --version` 做冒烟验证
 
@@ -158,7 +240,9 @@ git push origin main --follow-tags
 
 需要本机可用：
 
-- Node.js 20.12+
+- Node.js 20.12+，用于运行预构建产物
+- Node.js 22.18+，用于本地开发构建和 CI；仓库提供 `.node-version` 和 `.nvmrc`
+- npm 10.9+，本地开发推荐使用 `packageManager` 中声明的版本
 - Git
 - `git cnb`
 

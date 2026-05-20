@@ -30,19 +30,34 @@ export const description = `从目标分支准备 CNB 合并请求分支，并�
   DEBUG=mr                   等同于 --verbose`
 
 export const args = zod.tuple([
-  zod.string().optional().describe(argument({
-    name: 'target',
-    description: '目标分支，例如 master、test、prerelease',
-  })),
+  zod
+    .string()
+    .optional()
+    .describe(
+      argument({
+        name: 'target',
+        description: '目标分支，例如 master、test、prerelease',
+      }),
+    ),
 ])
 
 export const options = zod.object({
   dryRun: zod.boolean().describe(option({ description: '打印执行计划，不修改本地或远程状态' })),
+  pr: zod.boolean().describe(option({ description: '直接用当前分支作为 PR 源分支，不创建 MR 分支' })),
   verbose: zod.boolean().describe(option({ description: '显示 git/CNB 命令和完整输出' })),
   quiet: zod.boolean().describe(option({ description: '只输出错误' })),
   color: zod.boolean().describe(option({ description: '强制彩色输出' })),
-  noColor: zod.boolean().optional().describe(option({ description: '禁用彩色输出' })),
-  spinner: zod.boolean().default(true).describe(option({ description: '禁用交互式进度动画' })),
+  noColor: zod
+    .boolean()
+    .optional()
+    .describe(option({ description: '禁用彩色输出' })),
+  spinner: zod
+    .boolean()
+    .default(true)
+    .describe(option({ description: '禁用交互式进度动画' })),
+  merge: zod.boolean().describe(option({ description: '从目标分支准备 MR 分支，再 merge 当前分支；默认策略' })),
+  rebase: zod.boolean().describe(option({ description: '从当前分支准备 MR 分支，再 rebase 到目标分支' })),
+  mergeTarget: zod.boolean().describe(option({ description: '从当前分支准备 MR 分支，再 merge 目标分支' })),
 })
 
 type CommandArgs = zod.infer<typeof args>
@@ -81,7 +96,11 @@ export default function Index({ args: commandArgs, options: commandOptions }: Pr
       createContext({
         color: colorOptionFromArgv(argv),
         dryRun: commandOptions.dryRun,
+        merge: commandOptions.merge,
+        mergeTarget: commandOptions.mergeTarget,
         quiet: commandOptions.quiet,
+        pr: commandOptions.pr,
+        rebase: commandOptions.rebase,
         spinner: commandOptions.spinner,
         verbose: commandOptions.verbose,
       }),
@@ -115,9 +134,11 @@ export default function Index({ args: commandArgs, options: commandOptions }: Pr
     }
 
     if (!interactive) {
-      fail(new CliError('未指定目标分支。', {
-        next: ['使用 mr master、mr test、mr prerelease，或通过 mr 进入交互式选择。'],
-      }))
+      fail(
+        new CliError('未指定目标分支。', {
+          next: ['使用 mr master、mr test、mr prerelease，或通过 mr 进入交互式选择。'],
+        }),
+      )
       return
     }
 

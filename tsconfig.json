@@ -8,9 +8,9 @@
     "types": ["node"],
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
-    "strict": false,
+    "strict": true,
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "build.mjs"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "tsdown.config.ts", "vitest.config.ts"]
 }

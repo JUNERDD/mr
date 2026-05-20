@@ -3,7 +3,10 @@ export class CliError extends Error {
   details: string[]
   next: string[]
 
-  constructor(message: string, { exitCode = 1, details = [], next = [] }: { exitCode?: number; details?: string[]; next?: string[] } = {}) {
+  constructor(
+    message: string,
+    { exitCode = 1, details = [], next = [] }: { exitCode?: number; details?: string[]; next?: string[] } = {},
+  ) {
     super(message)
     this.name = 'CliError'
     this.exitCode = exitCode

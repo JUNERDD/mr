@@ -22,10 +22,7 @@ test('installer links into a writable PATH directory so mr is immediately availa
     await mkdir(join(packageDir, 'dist'), { recursive: true })
     await mkdir(pathBin, { recursive: true })
 
-    await writeFile(
-      join(packageDir, 'dist/index.js'),
-      ['#!/usr/bin/env node', 'console.log("0.0.0")', ''].join('\n'),
-    )
+    await writeFile(join(packageDir, 'dist/index.js'), ['#!/usr/bin/env node', 'console.log("0.0.0")', ''].join('\n'))
     await chmod(join(packageDir, 'dist/index.js'), 0o755)
     await writeFile(join(packageDir, 'package.json'), '{"name":"mr","version":"0.0.0"}\n')
     await writeFile(join(packageDir, 'README.md'), '# mr\n')

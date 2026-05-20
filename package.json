@@ -2,34 +2,38 @@
   "name": "mr",
   "version": "0.5.6",
   "description": "CNB merge request helper CLI.",
+  "keywords": [
+    "cli",
+    "cnb",
+    "git",
+    "merge-request"
+  ],
   "license": "MIT",
-  "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/JUNERDD/mr.git"
   },
-  "keywords": [
-    "cnb",
-    "git",
-    "merge-request",
-    "cli"
-  ],
+  "bin": {
+    "mr": "./dist/index.js",
+    "mrm": "./dist/index.js",
+    "mrp": "./dist/index.js",
+    "mrt": "./dist/index.js"
+  },
   "files": [
     "dist",
     "README.md",
     "install.sh",
     "uninstall.sh"
   ],
+  "type": "module",
   "main": "./dist/index.js",
-  "bin": {
-    "mr": "./dist/index.js",
-    "mrm": "./dist/index.js",
-    "mrt": "./dist/index.js",
-    "mrp": "./dist/index.js"
-  },
   "scripts": {
-    "build": "node build.mjs",
-    "check": "npm run typecheck && npm test && npm run build && node --check dist/index.js",
+    "build": "tsdown",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && node --check dist/index.js",
+    "fix": "oxfmt . && oxlint . --fix",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint . --deny-warnings",
     "pack:release": "bash scripts/package-release.sh",
     "install:local": "bash scripts/install-local.sh",
     "prepack": "npm run build",
@@ -41,23 +45,38 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
-  "engines": {
-    "node": ">=20.12"
-  },
   "devDependencies": {
     "@types/node": "^20.19.41",
     "@types/react": "^19.2.14",
-    "esbuild": "^0.28.0",
     "execa": "^9.6.1",
     "ink": "^7.0.2",
     "ora": "^9.4.0",
+    "oxfmt": "^0.51.0",
+    "oxlint": "^1.66.0",
     "pastel": "^4.0.1",
     "picocolors": "^1.1.1",
     "react": "^19.2.6",
     "react-devtools-core": "^6.1.5",
+    "tsdown": "^0.22.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
     "vitest": "^3.2.4",
     "zod": "^4.4.3"
-  }
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "npm",
+      "version": ">=10.9.0",
+      "onFail": "warn"
+    },
+    "runtime": {
+      "name": "node",
+      "version": ">=22.18.0",
+      "onFail": "error"
+    }
+  },
+  "engines": {
+    "node": ">=20.12"
+  },
+  "packageManager": "npm@10.9.4"
 }

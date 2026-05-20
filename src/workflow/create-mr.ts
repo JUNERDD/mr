@@ -8,12 +8,20 @@ import {
   getTrackedWorkingTreeStatus,
   git,
   hasNoNewPatchChanges,
+  hasNoUncontestedTreeChanges,
+  hasSameReplayedCommitSeries,
   isAncestor,
   remoteBranchExists,
 } from '../git/client.js'
 import { rewriteRebaseConflictMarkers } from '../git/conflicts.js'
 import { run } from '../runtime/runner.js'
+import { createMrByMerge } from './merge-mr.js'
+import { getActiveMrMerge } from './merge-resume.js'
+import { createMrByMergeTarget } from './merge-target-mr.js'
+import { createPrFromCurrentBranch } from './pr-mr.js'
+import { getActiveMrRebase, resumeActiveMrRebase } from './rebase-resume.js'
 import { restoreInitialBranch, withRecoveryDetails } from './recovery.js'
+import { resolveMrStrategy } from './strategy.js'
 
 class RebaseConflictError extends CliError {}
 
@@ -33,15 +41,54 @@ async function createPullRequest(
 }
 
 export async function createMrFromTargetBranch(targetBranch: string, context: any) {
+  await ensureGitContext(context)
+  const activeRebase = await getActiveMrRebase(targetBranch, context)
+  if (activeRebase && !context.dryRun) {
+    await resumeActiveMrRebase(activeRebase, targetBranch, context, pushAndEnsureRequest)
+    return
+  }
+
+  const strategy = await resolveMrStrategy(context)
+  if (strategy === 'pr') {
+    await createPrFromCurrentBranch(targetBranch, context)
+    return
+  }
+
+  const activeMerge = await getActiveMrMerge(targetBranch, context)
+  if (activeMerge && !context.dryRun) {
+    await createMrByMerge(targetBranch, context)
+    return
+  }
+
+  const currentBranch = await getCurrentBranch(context)
+  const mrBranch = mrBranchName(targetBranch, currentBranch)
+  if (!context.dryRun && (await remoteBranchExists(mrBranch, context))) {
+    await createMrByMerge(targetBranch, context)
+    return
+  }
+
+  if (strategy === 'merge') {
+    await createMrByMerge(targetBranch, context)
+    return
+  }
+
+  if (strategy === 'merge-target') {
+    await createMrByMergeTarget(targetBranch, context)
+    return
+  }
+
+  await createMrByRebase(targetBranch, context)
+}
+
+async function createMrByRebase(targetBranch: string, context: any) {
   const { ui } = context
 
-  await ensureGitContext(context)
   const currentBranch = await getCurrentBranch(context)
 
   if (context.dryRun) {
     // 编辑性排版:品牌面板永远是输出的第一眼,工作区脏不脏的提醒留到末尾做收尾脚注,
     // 不去抢 "mr 预览" 这个标题的注意力。
-    printDryRun(targetBranch, currentBranch, context)
+    printDryRun(targetBranch, currentBranch, context, 'rebase')
     const status = await getTrackedWorkingTreeStatus(context)
     if (status) {
       ui.status('warn', '工作区存在 tracked 改动；真实执行会先停止。')
@@ -56,11 +103,7 @@ export async function createMrFromTargetBranch(targetBranch: string, context: an
   // 品牌面板:整次执行里唯一一处 bold cyan "mr",副标题给出本次任务定语,
   // 正文用对齐到 col 11 的 key/value 列表(中文 4 字 = 8 visual col + 2 空格),
   // 让目标 / 当前 / MR 三个字段在视觉上形成一根隐形垂直线。
-  ui.panel('mr  合并请求', [
-    `目标分支  ${targetBranch}`,
-    `当前分支  ${currentBranch}`,
-    `MR 分支   ${mrBranch}`,
-  ])
+  ui.panel('mr  合并请求', [`目标分支  ${targetBranch}`, `当前分支  ${currentBranch}`, `MR 分支   ${mrBranch}`])
 
   try {
     ui.step('检查', `确认远程目标分支 origin/${targetBranch}。`)
@@ -78,13 +121,13 @@ export async function createMrFromTargetBranch(targetBranch: string, context: an
       return
     }
 
-    const existingMr = await prepareExistingMrBranch(mrBranch, targetBranch, currentBranch, context)
+    const forkPoint = await getMergeBase(`origin/${targetBranch}`, currentBranch, context)
+    const existingMr = await prepareExistingMrBranch(mrBranch, targetBranch, currentBranch, forkPoint, context)
 
     if (existingMr.done) {
       return
     }
 
-    const forkPoint = await getMergeBase(`origin/${targetBranch}`, currentBranch, context)
     await prepareLocalMrBranch(mrBranch, currentBranch, context)
     await rebaseMrBranch(mrBranch, currentBranch, targetBranch, forkPoint, context)
     await pushAndEnsureRequest(mrBranch, targetBranch, context)
@@ -100,10 +143,7 @@ export async function createMrFromTargetBranch(targetBranch: string, context: an
 
   // 完成面板:与品牌面板同样的对齐方式,但只剩两行,刻意短小,
   // 形成"开 — 步骤 — 收"的三段结构,最后一行是当前分支,告诉用户你在哪。
-  ui.panel('完成', [
-    `合并请求  ${mrBranch} -> ${targetBranch}`,
-    `已回到    ${currentBranch}`,
-  ], { tone: 'success' })
+  ui.panel('完成', [`合并请求  ${mrBranch} -> ${targetBranch}`, `已回到    ${currentBranch}`], { tone: 'success' })
 }
 
 async function refreshTargetBranch(targetBranch: string, context: any) {
@@ -118,6 +158,7 @@ async function prepareExistingMrBranch(
   mrBranch: string,
   targetBranch: string,
   currentBranch: string,
+  forkPoint: string,
   context: any,
 ) {
   if (!(await remoteBranchExists(mrBranch, context))) {
@@ -138,12 +179,32 @@ async function prepareExistingMrBranch(
   }
 
   const mrBasedOnTarget = await isAncestor(`origin/${targetBranch}`, `origin/${mrBranch}`, context)
+  const mrContainsCurrentBranch = await isAncestor(currentBranch, `origin/${mrBranch}`, context)
   const mrMatchesCurrentChanges =
-    await hasNoNewPatchChanges(`origin/${mrBranch}`, currentBranch, context) &&
-    await hasNoNewPatchChanges(currentBranch, `origin/${mrBranch}`, context, `origin/${targetBranch}`)
+    (await hasNoNewPatchChanges(`origin/${mrBranch}`, currentBranch, context)) &&
+    (await hasNoNewPatchChanges(currentBranch, `origin/${mrBranch}`, context, `origin/${targetBranch}`))
+  const mrReplaysCurrentCommits =
+    (await hasSameReplayedCommitSeries(
+      forkPoint,
+      currentBranch,
+      `origin/${targetBranch}`,
+      `origin/${mrBranch}`,
+      context,
+    )) &&
+    (await hasNoUncontestedTreeChanges(
+      forkPoint,
+      `origin/${targetBranch}`,
+      currentBranch,
+      `origin/${mrBranch}`,
+      context,
+    ))
 
-  if (mrBasedOnTarget && mrMatchesCurrentChanges) {
-    ui.step('合并请求', 'MR 分支已匹配当前分支的等价改动，只创建远程合并请求。')
+  if (mrBasedOnTarget && (mrContainsCurrentBranch || mrMatchesCurrentChanges || mrReplaysCurrentCommits)) {
+    const reason =
+      mrReplaysCurrentCommits && !mrMatchesCurrentChanges && !mrContainsCurrentBranch
+        ? 'MR 分支已包含当前分支的 rebase 提交序列，只创建远程合并请求。'
+        : 'MR 分支已匹配当前分支的等价改动，只创建远程合并请求。'
+    ui.step('合并请求', reason)
     await createPullRequest(mrBranch, targetBranch, context)
     ui.panel('完成', [`合并请求: ${mrBranch} -> ${targetBranch}`], { tone: 'success' })
     return { done: true }
@@ -153,11 +214,7 @@ async function prepareExistingMrBranch(
   return { done: false }
 }
 
-async function prepareLocalMrBranch(
-  mrBranch: string,
-  currentBranch: string,
-  context: any,
-) {
+async function prepareLocalMrBranch(mrBranch: string, currentBranch: string, context: any) {
   context.ui.step('切换', `从 ${currentBranch} 重建本地 ${mrBranch}。`)
   await git(['switch', '-C', mrBranch, currentBranch], context, {
     label: `切换到 ${mrBranch}`,
@@ -199,9 +256,8 @@ async function rebaseMrBranch(
 
   const next = [
     `当前处于 ${mrBranch} 的 rebase 冲突状态，请直接解决冲突。`,
-    '解决冲突后执行: git add <files> && git rebase --continue',
-    `然后推送更新: git push --force-with-lease origin HEAD:${mrBranch}`,
-    `必要时创建合并请求: git cnb pull create -H ${mrBranch} -B ${targetBranch}`,
+    '解决冲突后执行: git add <files>',
+    `然后重新运行: mr ${targetBranch}`,
   ]
 
   throw new RebaseConflictError(`变基 ${mrBranch} 到 ${targetBranch} 时发生冲突。`, {
@@ -219,5 +275,11 @@ async function pushAndEnsureRequest(mrBranch: string, targetBranch: string, cont
   })
 
   context.ui.step('合并请求', `创建合并请求: ${mrBranch} -> ${targetBranch}。`)
-  await createPullRequest(mrBranch, targetBranch, context)
+  const result = await createPullRequest(mrBranch, targetBranch, context, {
+    allowFailure: true,
+    labelPrefix: '确认合并请求',
+  })
+  if (result.exitCode !== 0) {
+    context.ui.status('warn', '合并请求创建未成功，可能已存在；MR 分支已推送。')
+  }
 }

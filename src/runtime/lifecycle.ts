@@ -1,7 +1,7 @@
+import { spawn } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
-import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { CliError } from '../core/errors.js'
 import type { LifecycleCommand } from '../core/targets.js'

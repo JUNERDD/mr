@@ -9,11 +9,18 @@ type ConflictStages = {
   theirs?: string
 }
 
-export async function rewriteRebaseConflictMarkers(
-  currentBranch: string,
-  targetBranch: string,
-  context: any,
-) {
+type RebaseConflictStages = {
+  base: string
+  ours: string
+  theirs: string
+}
+
+type AddAddConflictStages = {
+  ours: string
+  theirs: string
+}
+
+export async function rewriteRebaseConflictMarkers(currentBranch: string, targetBranch: string, context: any) {
   const conflicts = await listUnmergedStages(context)
   if (!conflicts.size) {
     return
@@ -21,15 +28,16 @@ export async function rewriteRebaseConflictMarkers(
 
   const conflictStyle = await getConflictStyleArgs(context)
   for (const [path, stages] of conflicts) {
-    if (!stages.ours || !stages.theirs) {
+    const { base, ours, theirs } = stages
+    if (!ours || !theirs) {
       continue
     }
 
-    const currentLabel = await getSideLabel(currentBranch, stages.theirs, path, 'REBASE_HEAD', context)
-    const targetLabel = await getSideLabel(`origin/${targetBranch}`, stages.ours, path, 'HEAD', context)
-    const result = stages.base
-      ? await mergeStageObjects(stages, conflictStyle, currentLabel, targetLabel, context)
-      : await mergeAddAddStages(stages, conflictStyle, currentLabel, targetLabel, context)
+    const currentLabel = await getSideLabel(currentBranch, theirs, path, 'REBASE_HEAD', context)
+    const targetLabel = await getSideLabel(`origin/${targetBranch}`, ours, path, 'HEAD', context)
+    const result = base
+      ? await mergeStageObjects({ base, ours, theirs }, conflictStyle, currentLabel, targetLabel, context)
+      : await mergeAddAddStages({ ours, theirs }, conflictStyle, currentLabel, targetLabel, context)
 
     if (isMergeFileResultUsable(result)) {
       await writeFile(path, result.stdout)
@@ -93,34 +101,38 @@ async function getConflictStyleArgs(context: any) {
 }
 
 async function mergeStageObjects(
-  stages: ConflictStages,
+  stages: RebaseConflictStages,
   conflictStyle: string[],
   currentLabel: string,
   targetLabel: string,
   context: any,
 ) {
-  return git([
-    'merge-file',
-    '-p',
-    '--object-id',
-    ...conflictStyle,
-    '-L',
-    currentLabel,
-    '-L',
-    'merge base',
-    '-L',
-    targetLabel,
-    stages.theirs,
-    stages.base,
-    stages.ours,
-  ], context, {
-    allowFailure: true,
-    quiet: true,
-  })
+  return git(
+    [
+      'merge-file',
+      '-p',
+      '--object-id',
+      ...conflictStyle,
+      '-L',
+      currentLabel,
+      '-L',
+      'merge base',
+      '-L',
+      targetLabel,
+      stages.theirs,
+      stages.base,
+      stages.ours,
+    ],
+    context,
+    {
+      allowFailure: true,
+      quiet: true,
+    },
+  )
 }
 
 async function mergeAddAddStages(
-  stages: ConflictStages,
+  stages: AddAddConflictStages,
   conflictStyle: string[],
   currentLabel: string,
   targetLabel: string,
@@ -147,23 +159,27 @@ async function mergeAddAddStages(
     await writeFile(basePath, '')
     await writeFile(targetPath, target.stdout)
 
-    const result = await git([
-      'merge-file',
-      '-p',
-      ...conflictStyle,
-      '-L',
-      currentLabel,
-      '-L',
-      'empty base',
-      '-L',
-      targetLabel,
-      currentPath,
-      basePath,
-      targetPath,
-    ], context, {
-      allowFailure: true,
-      quiet: true,
-    })
+    const result = await git(
+      [
+        'merge-file',
+        '-p',
+        ...conflictStyle,
+        '-L',
+        currentLabel,
+        '-L',
+        'empty base',
+        '-L',
+        targetLabel,
+        currentPath,
+        basePath,
+        targetPath,
+      ],
+      context,
+      {
+        allowFailure: true,
+        quiet: true,
+      },
+    )
 
     return result
   } finally {
@@ -171,41 +187,24 @@ async function mergeAddAddStages(
   }
 }
 
-async function getSideLabel(
-  prefix: string,
-  objectId: string,
-  path: string,
-  fallbackRev: string,
-  context: any,
-) {
-  const commit = await getObjectIntroducingCommit(objectId, path, context) ??
-    await getObjectTouchingCommit(objectId, path, context) ??
-    await gitOutput(['log', '-1', '--format=%h %an (%s)', fallbackRev], context)
+async function getSideLabel(prefix: string, objectId: string, path: string, fallbackRev: string, context: any) {
+  const commit =
+    (await getObjectIntroducingCommit(objectId, path, context)) ??
+    (await getObjectTouchingCommit(objectId, path, context)) ??
+    (await gitOutput(['log', '-1', '--format=%h %an (%s)', fallbackRev], context))
 
   return [prefix, sanitizeLabel(commit)].filter(Boolean).join(' ')
 }
 
 async function getObjectIntroducingCommit(objectId: string, path: string, context: any) {
-  return getObjectCommit([
-    'log',
-    '--all',
-    `--find-object=${objectId}`,
-    '--diff-filter=A',
-    '--format=%h %an (%s)',
-    '--',
-    path,
-  ], context)
+  return getObjectCommit(
+    ['log', '--all', `--find-object=${objectId}`, '--diff-filter=A', '--format=%h %an (%s)', '--', path],
+    context,
+  )
 }
 
 async function getObjectTouchingCommit(objectId: string, path: string, context: any) {
-  return getObjectCommit([
-    'log',
-    '--all',
-    `--find-object=${objectId}`,
-    '--format=%h %an (%s)',
-    '--',
-    path,
-  ], context)
+  return getObjectCommit(['log', '--all', `--find-object=${objectId}`, '--format=%h %an (%s)', '--', path], context)
 }
 
 async function getObjectCommit(args: string[], context: any) {
@@ -218,8 +217,7 @@ function sanitizeLabel(label: string | null) {
 }
 
 function isMergeFileResultUsable(result: any) {
-  return result.exitCode > 0 &&
-    result.exitCode < 128 &&
-    result.stdout?.includes('<<<<<<< ') &&
-    !result.stdout.includes('\0')
+  return (
+    result.exitCode > 0 && result.exitCode < 128 && result.stdout?.includes('<<<<<<< ') && !result.stdout.includes('\0')
+  )
 }

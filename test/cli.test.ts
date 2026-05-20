@@ -1,17 +1,27 @@
 import assert from 'node:assert/strict'
-import { readFile, readdir } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import { test } from 'vitest'
 import { buildDryRunCommands } from '../src/core/dry-run.js'
 import { CliError } from '../src/core/errors.js'
 import { formatCommand } from '../src/core/format.js'
-import { isInteractiveInvocation, normalizeHelpArgv, resolveLifecycleCommand, resolveTargetFromInvocation } from '../src/core/targets.js'
+import {
+  isInteractiveInvocation,
+  normalizeHelpArgv,
+  resolveLifecycleCommand,
+  resolveTargetFromInvocation,
+} from '../src/core/targets.js'
 import { createSelectConfig, selectTarget } from '../src/ui/select-target.js'
 import { createUi, resolveColorEnabled } from '../src/ui/terminal.js'
 import { withRecoveryDetails } from '../src/workflow/recovery.js'
+import { resolveMrStrategy } from '../src/workflow/strategy.js'
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)))
+const execFileAsync = promisify(execFile)
 
 async function listSourceFiles(dir: string): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true })
@@ -65,7 +75,16 @@ test('selectTarget fails fast outside an interactive terminal', async () => {
 })
 
 test('createSelectConfig maps the three target choices', () => {
-  const ui = createUi({ color: false, stream: { isTTY: false, write() { return true } } as any, env: {} })
+  const ui = createUi({
+    color: false,
+    stream: {
+      isTTY: false,
+      write() {
+        return true
+      },
+    } as any,
+    env: {},
+  })
   const config = createSelectConfig(ui)
 
   assert.equal(config.theme.indexMode, 'number')
@@ -76,7 +95,10 @@ test('createSelectConfig maps the three target choices', () => {
 })
 
 test('formatCommand keeps shell-like output readable', () => {
-  assert.equal(formatCommand('git', ['push', 'origin', 'HEAD:mr/master/feature/a']), 'git push origin HEAD:mr/master/feature/a')
+  assert.equal(
+    formatCommand('git', ['push', 'origin', 'HEAD:mr/master/feature/a']),
+    'git push origin HEAD:mr/master/feature/a',
+  )
   assert.equal(formatCommand('git', ['switch', 'feature with space']), 'git switch "feature with space"')
 })
 
@@ -97,6 +119,23 @@ test('buildDryRunCommands includes the core MR workflow', () => {
   assert.deepEqual(rendered, [
     'git fetch origin +test:refs/remotes/origin/test',
     'git ls-remote --exit-code --heads origin mr/test/feature/demo',
+    'git push origin HEAD:mr/test/feature/demo',
+    'git cnb pull create -H mr/test/feature/demo -B test',
+    'git switch -C mr/test/feature/demo origin/test',
+    'git branch --set-upstream-to origin/mr/test/feature/demo mr/test/feature/demo',
+    'git merge --no-edit feature/demo',
+    'git push origin HEAD:mr/test/feature/demo',
+    'git switch feature/demo',
+  ])
+})
+
+test('buildDryRunCommands supports the rebase strategy', () => {
+  const commands = buildDryRunCommands('test', 'feature/demo', 'rebase')
+  const rendered = commands.map(({ command, args }) => formatCommand(command, args))
+
+  assert.deepEqual(rendered, [
+    'git fetch origin +test:refs/remotes/origin/test',
+    'git ls-remote --exit-code --heads origin mr/test/feature/demo',
     'git switch -C mr/test/feature/demo feature/demo',
     'git merge-base origin/test feature/demo',
     'git rebase --onto origin/test MERGE_BASE mr/test/feature/demo',
@@ -104,6 +143,60 @@ test('buildDryRunCommands includes the core MR workflow', () => {
     'git cnb pull create -H mr/test/feature/demo -B test',
     'git switch feature/demo',
   ])
+})
+
+test('buildDryRunCommands supports the merge-target strategy', () => {
+  const commands = buildDryRunCommands('test', 'feature/demo', 'merge-target')
+  const rendered = commands.map(({ command, args }) => formatCommand(command, args))
+
+  assert.deepEqual(rendered, [
+    'git fetch origin +test:refs/remotes/origin/test',
+    'git ls-remote --exit-code --heads origin mr/test/feature/demo',
+    'git switch -C mr/test/feature/demo feature/demo',
+    'git merge --no-edit origin/test',
+    'git push --force-with-lease --set-upstream origin HEAD:mr/test/feature/demo',
+    'git cnb pull create -H mr/test/feature/demo -B test',
+    'git switch feature/demo',
+  ])
+})
+
+test('buildDryRunCommands supports direct PR creation from the current branch', () => {
+  const commands = buildDryRunCommands('test', 'feature/demo', 'pr')
+  const rendered = commands.map(({ command, args }) => formatCommand(command, args))
+
+  assert.deepEqual(rendered, [
+    'git fetch origin +test:refs/remotes/origin/test',
+    'git push --set-upstream origin HEAD:feature/demo',
+    'git cnb pull create -H feature/demo -B test',
+  ])
+})
+
+test('resolveMrStrategy accepts flags and environment configuration', async () => {
+  assert.equal(await resolveMrStrategy({ merge: true, env: { MR_STRATEGY: 'rebase' } }), 'merge')
+  assert.equal(await resolveMrStrategy({ rebase: true }), 'rebase')
+  assert.equal(await resolveMrStrategy({ mergeTarget: true }), 'merge-target')
+  assert.equal(await resolveMrStrategy({ pr: true }), 'pr')
+  assert.equal(await resolveMrStrategy({ env: { MR_STRATEGY: 'merge_target' } }), 'merge-target')
+})
+
+test('resolveMrStrategy reads git config when no flag or environment override exists', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mr-strategy-'))
+  const originalCwd = process.cwd()
+
+  try {
+    await execFileAsync('git', ['init'], { cwd: root })
+    await execFileAsync('git', ['config', 'mr.strategy', 'merge-target'], { cwd: root })
+    process.chdir(root)
+
+    assert.equal(await resolveMrStrategy({ env: {} }), 'merge-target')
+  } finally {
+    process.chdir(originalCwd)
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('resolveMrStrategy rejects conflicting strategy flags', async () => {
+  await assert.rejects(resolveMrStrategy({ pr: true, rebase: true }), /只能指定一个 MR 策略选项/)
 })
 
 test('withRecoveryDetails preserves the original error and records branch recovery', () => {

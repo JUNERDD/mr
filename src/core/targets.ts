@@ -1,4 +1,4 @@
-export const TARGET_BY_BIN = {
+export const TARGET_BY_BIN: Record<string, string> = {
   mrm: 'master',
   mrt: 'test',
   mrp: 'prerelease',
@@ -36,5 +36,5 @@ export function resolveTargetFromInvocation(invokedName: string, targetArg?: str
     return TARGET_BY_BIN[invokedName]
   }
 
-  return TARGET_BY_BIN[targetArg] ?? targetArg
+  return targetArg ? (TARGET_BY_BIN[targetArg] ?? targetArg) : undefined
 }

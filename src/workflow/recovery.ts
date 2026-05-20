@@ -63,7 +63,7 @@ export async function restoreInitialBranch(initialBranch: string, context: any):
     }
   }
 
-  if (await hasGitState('rebase-merge', context) || await hasGitState('rebase-apply', context)) {
+  if ((await hasGitState('rebase-merge', context)) || (await hasGitState('rebase-apply', context))) {
     const abort = await git(['rebase', '--abort'], context, {
       allowFailure: true,
       label: '中止未完成 rebase',
@@ -94,11 +94,7 @@ export async function restoreInitialBranch(initialBranch: string, context: any):
   return {
     attempted: true,
     branch: initialBranch,
-    details: [
-      ...details,
-      `自动回到初始分支失败: ${initialBranch}`,
-      ...compactOutput(switched.all),
-    ],
+    details: [...details, `自动回到初始分支失败: ${initialBranch}`, ...compactOutput(switched.all)],
     restored: false,
   }
 }

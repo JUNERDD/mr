@@ -1,9 +1,9 @@
-import { Box, Text, render, useInput } from 'ink'
 import type { Instance } from 'ink'
+import { Box, render, Text, useInput } from 'ink'
 import { useMemo, useState } from 'react'
 import { CliError } from '../core/errors.js'
 import { TARGET_OPTIONS } from '../core/targets.js'
-import { createUi } from './terminal.js'
+import type { createUi } from './terminal.js'
 
 type OutputStream = NodeJS.WritableStream & { isTTY?: boolean }
 type InputStream = NodeJS.ReadableStream & { isTTY?: boolean }
@@ -96,7 +96,9 @@ export function TargetPicker({ onCancel, onSelect, ui }: TargetPickerProps) {
   return (
     <Box flexDirection="column">
       <Text>
-        <Text bold color={colorEnabled ? 'cyan' : undefined}>mr</Text>
+        <Text bold color={colorEnabled ? 'cyan' : undefined}>
+          mr
+        </Text>
         {'  目标分支'}
       </Text>
       {choices.map((choice, index) => {
@@ -104,11 +106,11 @@ export function TargetPicker({ onCancel, onSelect, ui }: TargetPickerProps) {
         return (
           <Text key={choice.value} color={active && colorEnabled ? 'cyan' : undefined} bold={active}>
             {active ? '>' : ' '} {index + 1}. {choice.name}
-            <Text dimColor={colorEnabled}>  {choice.description}</Text>
+            <Text dimColor={colorEnabled}> {choice.description}</Text>
           </Text>
         )
       })}
-      <Text dimColor={colorEnabled}>上下 / 数字键 选择   回车 确认   q 取消</Text>
+      <Text dimColor={colorEnabled}>上下 / 数字键 选择 回车 确认 q 取消</Text>
     </Box>
   )
 }

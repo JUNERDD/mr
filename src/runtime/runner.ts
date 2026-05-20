@@ -74,12 +74,21 @@ export async function run(
   return result
 }
 
-async function execute(command: string, args: string[], spinner: any, ui: ReturnType<typeof createUi>, commandLabel: string) {
+async function execute(
+  command: string,
+  args: string[],
+  spinner: any,
+  ui: ReturnType<typeof createUi>,
+  commandLabel: string,
+) {
   try {
     return await execa(command, args, { all: true, reject: false })
   } catch (error: any) {
     if (spinner) {
-      spinner.stopAndPersist({ symbol: ui.colors.red('x'), text: commandLabel })
+      spinner.stopAndPersist({
+        symbol: ui.colors.red('x'),
+        text: commandLabel,
+      })
     }
 
     if (error?.code === 'ENOENT') {
@@ -94,7 +103,13 @@ async function execute(command: string, args: string[], spinner: any, ui: Return
   }
 }
 
-function persistResult(spinner: any, ui: ReturnType<typeof createUi>, quiet: boolean, succeeded: boolean, commandLabel: string) {
+function persistResult(
+  spinner: any,
+  ui: ReturnType<typeof createUi>,
+  quiet: boolean,
+  succeeded: boolean,
+  commandLabel: string,
+) {
   if (spinner) {
     spinner.stopAndPersist({
       symbol: succeeded ? ui.colors.cyan('+') : ui.colors.red('x'),
@@ -105,7 +120,14 @@ function persistResult(spinner: any, ui: ReturnType<typeof createUi>, quiet: boo
   }
 }
 
-function maybePrintOutput(result: any, ui: ReturnType<typeof createUi>, quiet: boolean, verbose: boolean, showOutput: boolean, succeeded: boolean) {
+function maybePrintOutput(
+  result: any,
+  ui: ReturnType<typeof createUi>,
+  quiet: boolean,
+  verbose: boolean,
+  showOutput: boolean,
+  succeeded: boolean,
+) {
   const combinedOutput = result.all ?? result.stderr ?? result.stdout ?? ''
   if (!combinedOutput || quiet || ui.quiet || !(verbose || showOutput || !succeeded)) {
     return

@@ -249,8 +249,8 @@ print_done() {
   printf '  mrm          -> mr master\n'
   printf '  mrt          -> mr test\n'
   printf '  mrp          -> mr prerelease\n'
-  printf '  mr update    -> 更新到最新 release\n'
-  printf '  mr uninstall -> 卸载 mr\n'
+  printf '  mr --update    -> 更新到最新 release\n'
+  printf '  mr --uninstall -> 卸载 mr\n'
   printf '\n'
 
   case ":$PATH:" in

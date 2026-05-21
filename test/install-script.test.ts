@@ -43,6 +43,10 @@ test('installer links into a writable PATH directory so mr is immediately availa
 
     const install = await execFileAsync('bash', [join(projectRoot, 'install.sh')], { env })
     assert.match(install.stdout, new RegExp(`命令链接目录: ${pathBin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))
+    assert.match(install.stdout, /mr --update\s+-> 更新到最新 release/)
+    assert.match(install.stdout, /mr --uninstall\s+-> 卸载 mr/)
+    assert.doesNotMatch(install.stdout, /mr update\s+->/)
+    assert.doesNotMatch(install.stdout, /mr uninstall\s+->/)
     assert.match(install.stdout, /可以直接使用: mr --version/)
     assert.equal(await readlink(join(pathBin, 'mr')), join(installDir, 'dist/index.js'))
 

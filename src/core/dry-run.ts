@@ -1,4 +1,4 @@
-import type { MrStrategy } from '../workflow/strategy.js'
+import type { MrStrategy } from './settings.js'
 
 export function mrBranchName(targetBranch: string, currentBranch: string) {
   return `mr/${targetBranch}/${currentBranch}`

@@ -9,12 +9,9 @@ import { test } from 'vitest'
 import { buildDryRunCommands } from '../src/core/dry-run.js'
 import { CliError } from '../src/core/errors.js'
 import { formatCommand } from '../src/core/format.js'
-import {
-  isInteractiveInvocation,
-  normalizeHelpArgv,
-  resolveLifecycleCommand,
-  resolveTargetFromInvocation,
-} from '../src/core/targets.js'
+import { isInteractiveInvocation, normalizeHelpArgv, resolveTargetFromInvocation } from '../src/core/targets.js'
+import { readMrSettings, unsetStrategyConfig, writeStrategyConfig } from '../src/core/settings.js'
+import { assertConfigInteractiveTerminal, createConfigScopeChoices, createStrategyChoices } from '../src/ui/config.js'
 import { createSelectConfig, selectTarget } from '../src/ui/select-target.js'
 import { createUi, resolveColorEnabled } from '../src/ui/terminal.js'
 import { withRecoveryDetails } from '../src/workflow/recovery.js'
@@ -56,10 +53,10 @@ test('mr without a target is interactive, explicit targets are not', () => {
   assert.equal(isInteractiveInvocation('mrm'), false)
 })
 
-test('mr reserves lifecycle subcommands', () => {
-  assert.equal(resolveLifecycleCommand('mr', 'update'), 'update')
-  assert.equal(resolveLifecycleCommand('mr', 'uninstall'), 'uninstall')
-  assert.equal(resolveLifecycleCommand('mrm', 'update'), undefined)
+test('maintenance names remain valid target branches', () => {
+  assert.equal(resolveTargetFromInvocation('mr', 'config'), 'config')
+  assert.equal(resolveTargetFromInvocation('mr', 'update'), 'update')
+  assert.equal(resolveTargetFromInvocation('mr', 'uninstall'), 'uninstall')
 })
 
 test('normalizeHelpArgv maps mr -help to --help', () => {
@@ -71,6 +68,13 @@ test('selectTarget fails fast outside an interactive terminal', async () => {
   await assert.rejects(
     selectTarget({ input: { isTTY: false } as any, output: { isTTY: false } as any, ui: createUi() }),
     /交互式终端/,
+  )
+})
+
+test('assertConfigInteractiveTerminal explains non-interactive config usage', () => {
+  assert.throws(
+    () => assertConfigInteractiveTerminal({ isTTY: false } as any, { isTTY: false } as any),
+    /mr --config 需要在交互式终端/,
   )
 })
 
@@ -91,6 +95,24 @@ test('createSelectConfig maps the three target choices', () => {
   assert.deepEqual(
     config.choices.map((choice) => choice.value),
     ['master', 'test', 'prerelease'],
+  )
+})
+
+test('createConfigScopeChoices follows git config scopes', () => {
+  assert.deepEqual(
+    createConfigScopeChoices(true).map((choice) => choice.value),
+    ['local', 'global'],
+  )
+  assert.deepEqual(
+    createConfigScopeChoices(false).map((choice) => choice.value),
+    ['global'],
+  )
+})
+
+test('createStrategyChoices exposes all MR strategies', () => {
+  assert.deepEqual(
+    createStrategyChoices().map((choice) => choice.value),
+    ['merge', 'rebase', 'merge-target', 'pr'],
   )
 })
 
@@ -189,6 +211,60 @@ test('resolveMrStrategy reads git config when no flag or environment override ex
     process.chdir(root)
 
     assert.equal(await resolveMrStrategy({ env: {} }), 'merge-target')
+  } finally {
+    process.chdir(originalCwd)
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('readMrSettings reports effective strategy by precedence', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mr-settings-'))
+  const repo = join(root, 'repo')
+  const globalConfig = join(root, 'global.gitconfig')
+  const originalCwd = process.cwd()
+  const originalGlobalConfig = process.env.GIT_CONFIG_GLOBAL
+
+  try {
+    await execFileAsync('git', ['init', repo])
+    process.env.GIT_CONFIG_GLOBAL = globalConfig
+    await execFileAsync('git', ['config', '--global', 'mr.strategy', 'rebase'])
+    await execFileAsync('git', ['config', 'mr.strategy', 'merge-target'], { cwd: repo })
+    process.chdir(repo)
+
+    const settings = await readMrSettings({ env: {}, ui: createUi({ quiet: true }) })
+    assert.equal(settings.effective, 'merge-target')
+    assert.equal(settings.source, 'local')
+    assert.equal(settings.global, 'rebase')
+    assert.equal(settings.local, 'merge-target')
+
+    const envSettings = await readMrSettings({ env: { MR_STRATEGY: 'pr' }, ui: createUi({ quiet: true }) })
+    assert.equal(envSettings.effective, 'pr')
+    assert.equal(envSettings.source, 'environment')
+  } finally {
+    process.chdir(originalCwd)
+    if (originalGlobalConfig === undefined) {
+      delete process.env.GIT_CONFIG_GLOBAL
+    } else {
+      process.env.GIT_CONFIG_GLOBAL = originalGlobalConfig
+    }
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('writeStrategyConfig and unsetStrategyConfig update git config scopes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mr-settings-write-'))
+  const originalCwd = process.cwd()
+
+  try {
+    await execFileAsync('git', ['init'], { cwd: root })
+    process.chdir(root)
+
+    const context = { env: {}, ui: createUi({ quiet: true }) }
+    await writeStrategyConfig('rebase', 'local', context)
+    assert.equal((await execFileAsync('git', ['config', '--local', '--get', 'mr.strategy'])).stdout.trim(), 'rebase')
+
+    assert.equal(await unsetStrategyConfig('local', context), true)
+    assert.equal(await unsetStrategyConfig('local', context), false)
   } finally {
     process.chdir(originalCwd)
     await rm(root, { recursive: true, force: true })

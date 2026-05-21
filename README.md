@@ -13,6 +13,7 @@ mr  # 交互式选择 master / test / prerelease
 mrm # master
 mrt # test
 mrp # prerelease
+mr --config # 交互式设置默认 MR 策略
 ```
 
 常用 DX 开关：
@@ -31,8 +32,9 @@ mr -help                # 同样查看帮助
 维护命令：
 
 ```sh
-mr update               # 更新到最新 GitHub Release 预构建产物
-mr uninstall            # 卸载 mr
+mr --config             # 交互式查看和设置默认 MR 策略
+mr --update             # 更新到最新 GitHub Release 预构建产物
+mr --uninstall          # 卸载 mr
 ```
 
 ## 本机启用
@@ -49,7 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/JUNERDD/mr/main/install.sh | bash
 卸载：
 
 ```sh
-mr uninstall
+mr --uninstall
 ```
 
 也可以直接执行：
@@ -102,10 +104,37 @@ curl -fsSL https://raw.githubusercontent.com/JUNERDD/mr/main/install.sh | bash
 - merge 冲突：处于 MR 分支的待解决冲突状态；解决后 `git add <files>`，再重新运行 `mr <target>` / `mrt` 提交合并结果、推送并创建 PR。
 - `--rebase`：从当前分支准备 MR 分支，再 rebase 到目标分支。
 - `--merge-target`：从当前分支准备 MR 分支，再把目标分支 merge 进去。
-- `--pr` 和三种 MR 分支策略都适用于 `mr` 交互式选择、`mrm`、`mrt`、`mrp` 和 `mr <target>`；也可通过 `git config mr.strategy pr|merge|rebase|merge-target` 或 `MR_STRATEGY=...` 设置默认策略。
+- `--pr` 和三种 MR 分支策略都适用于 `mr` 交互式选择、`mrm`、`mrt`、`mrp` 和 `mr <target>`；也可通过 `mr --config`、`git config mr.strategy pr|merge|rebase|merge-target` 或 `MR_STRATEGY=...` 设置默认策略。
 - 其他中途失败：自动尝试回到初始分支。
 - 默认要求 tracked 工作区干净，避免切换分支时带入未提交改动。
 - 进度、诊断和错误写到 stderr，命令输出不会污染管道中的 stdout。
+
+## 配置
+
+默认策略遵循常见 CLI 分层：命令行 flag 只影响本次执行，环境变量适合 CI / 脚本，持久默认值写入配置。
+
+优先级从高到低：
+
+1. `--pr` / `--merge` / `--rebase` / `--merge-target`
+2. `MR_STRATEGY=pr|merge|rebase|merge-target`
+3. 当前仓库 `git config mr.strategy ...`
+4. 全局用户 `git config --global mr.strategy ...`
+5. 内置默认 `merge`
+
+交互式设置：
+
+```sh
+mr --config
+```
+
+脚本友好用法：
+
+```sh
+mr --config --show
+mr --config --strategy rebase
+mr --config --global --strategy pr
+mr --config --unset
+```
 
 ## 分支逻辑图
 
@@ -114,7 +143,7 @@ curl -fsSL https://raw.githubusercontent.com/JUNERDD/mr/main/install.sh | bash
 ```mermaid
 flowchart TD
   A["执行 mr*<br/>mr / mrm / mrt / mrp / mr &lt;target&gt;"] --> B["解析目标分支 T<br/>mrm=master, mrt=test, mrp=prerelease"]
-  B --> C["解析策略<br/>--pr 或默认 / --merge / --rebase / --merge-target<br/>git config mr.strategy 也可设置默认"]
+  B --> C["解析策略<br/>--pr 或 --merge / --rebase / --merge-target<br/>mr --config / git config 可设置默认"]
   C --> D["要求 tracked 工作区干净<br/>fetch origin/T"]
   D --> E{"当前是否处于 M 的<br/>未完成 merge/rebase 状态?"}
 
@@ -178,9 +207,11 @@ flowchart TD
 ## UI / DX
 
 - `mr -h`、`mr -help`、`mr --help` 都展示 Pastel 根据 Zod schema 生成的参数、选项和版本信息。
+- Pastel 会给布尔 flag 展示默认值；`--dry-run` 等显示“关闭”表示该 flag 默认不启用，`--merge` / `--rebase` / `--merge-target` 显示的是“是否临时覆盖策略”，真正的默认策略由 `mr --config` 决定，内置默认是 `merge`。
 - `mr` 会进入 Ink 键盘交互选择，支持上下键、数字键 `1-3`、回车确认、`q` 或 `Ctrl-C` 取消。
-- `mr update` 会重新执行已安装的 `install.sh`，下载最新 release 预构建产物并覆盖当前安装。
-- `mr uninstall` 会执行已安装的 `uninstall.sh`，删除命令链接、安装目录和 shell 配置片段。
+- `mr --config` 会进入 Ink 键盘交互设置，先选择写入当前仓库还是全局用户配置，再选择默认策略；脚本环境可用 `mr --config --strategy rebase`、`mr --config --global --strategy pr`、`mr --config --show` 或 `mr --config --unset`。
+- `mr --update` 会重新执行已安装的 `install.sh`，下载最新 release 预构建产物并覆盖当前安装。
+- `mr --uninstall` 会执行已安装的 `uninstall.sh`，删除命令链接、安装目录和 shell 配置片段。
 - `--version` 输出当前版本。
 - `--dry-run` 展示可能执行的 git / CNB 命令，不修改本地分支、远程分支或创建合并请求。
 - `--pr`、`--merge`、`--rebase`、`--merge-target` 可临时覆盖 `mr.strategy` 配置。

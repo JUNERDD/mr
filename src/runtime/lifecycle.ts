@@ -4,7 +4,8 @@ import { access } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CliError } from '../core/errors.js'
-import type { LifecycleCommand } from '../core/targets.js'
+
+export type LifecycleCommand = 'uninstall' | 'update'
 
 const BIN_NAMES = new Set(['mr', 'mrm', 'mrt', 'mrp'])
 
@@ -40,7 +41,7 @@ async function findLifecycleScript(command: LifecycleCommand, moduleUrl: string)
     }
   }
 
-  throw new CliError(`找不到 ${scriptName}，无法执行 mr ${command}。`, {
+  throw new CliError(`找不到 ${scriptName}，无法执行 mr --${command}。`, {
     next: ['重新执行安装命令，或检查当前 mr 是否来自完整安装目录。'],
   })
 }

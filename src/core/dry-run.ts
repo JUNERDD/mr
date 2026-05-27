@@ -35,14 +35,9 @@ function buildMergeDryRunCommands(targetBranch: string, currentBranch: string, m
       args: ['ls-remote', '--exit-code', '--heads', 'origin', mrBranch],
     },
     {
-      label: `必要时推送 MR 分支 ${mrBranch}`,
+      label: `必要时从目标分支创建远程 MR 分支 ${mrBranch}`,
       command: 'git',
-      args: ['push', 'origin', `HEAD:${mrBranch}`],
-    },
-    {
-      label: `创建合并请求 ${mrBranch} -> ${targetBranch}`,
-      command: 'git',
-      args: ['cnb', 'pull', 'create', '-H', mrBranch, '-B', targetBranch],
+      args: ['push', 'origin', `refs/remotes/origin/${targetBranch}:refs/heads/${mrBranch}`],
     },
     {
       label: `准备本地冲突处理分支 ${mrBranch}`,
@@ -63,6 +58,11 @@ function buildMergeDryRunCommands(targetBranch: string, currentBranch: string, m
       label: `推送更新后的 ${mrBranch}`,
       command: 'git',
       args: ['push', 'origin', `HEAD:${mrBranch}`],
+    },
+    {
+      label: `创建合并请求 ${mrBranch} -> ${targetBranch}`,
+      command: 'git',
+      args: ['cnb', 'pull', 'create', '-H', mrBranch, '-B', targetBranch],
     },
     {
       label: `回到当前分支 ${currentBranch}`,

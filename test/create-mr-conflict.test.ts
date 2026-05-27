@@ -90,6 +90,19 @@ test('merge conflicts can be continued by running mr again after staging resolut
     assert.equal(await gitOutput(repo, ['branch', '--show-current']), 'mr/test/feature/demo')
     assert.match(await gitOutput(repo, ['rev-parse', '--verify', 'MERGE_HEAD']), /^[0-9a-f]{40}$/u)
     assert.match(await gitOutput(repo, ['status', '--porcelain']), /^UU file\.txt/m)
+    assert.equal(
+      await gitOutput(repo, ['rev-parse', 'origin/mr/test/feature/demo']),
+      await gitOutput(repo, ['rev-parse', 'origin/test']),
+    )
+    assert.equal(
+      await gitOutput(repo, [
+        'rev-list',
+        '--left-right',
+        '--count',
+        'mr/test/feature/demo...origin/mr/test/feature/demo',
+      ]),
+      '0\t0',
+    )
 
     await writeFile(join(repo, 'file.txt'), 'feature\n')
     await git(repo, ['add', 'file.txt'])

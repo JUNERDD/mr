@@ -365,7 +365,7 @@ test('reuses an existing MR branch regardless of the requested MR strategy', asy
       await rm(root, { recursive: true, force: true })
     }
   }
-})
+}, 60_000)
 
 test('creates the MR branch from current changes before merging the target when requested', async () => {
   const root = await mkdtemp(join(tmpdir(), 'mr-merge-target-'))

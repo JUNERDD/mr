@@ -99,7 +99,7 @@ curl -fsSL https://raw.githubusercontent.com/JUNERDD/mr/main/install.sh | bash
 - 当前分支已经合入目标分支：直接退出，不创建 PR。
 - 默认等同于 `--merge`：从目标分支准备 MR 分支，再把当前分支 merge 进去。
 - 远程 MR 分支已存在：统一复用已有 MR 分支，合入当前分支并同步目标分支。
-- 远程 MR 分支不存在：按所选策略准备新的 MR 分支。
+- 远程 MR 分支不存在：默认 `--merge` 会先从目标分支创建远程 MR 分支占位，再在本地从目标分支准备 MR 分支并合入当前分支。
 - `--pr`：不创建 `mr/*` 分支，直接推送当前分支并用当前分支创建到目标分支的 PR。
 - merge 冲突：处于 MR 分支的待解决冲突状态；解决后 `git add <files>`，再重新运行 `mr <target>` / `mrt` 提交合并结果、推送并创建 PR。
 - `--rebase`：从当前分支准备 MR 分支，再 rebase 到目标分支。
@@ -174,7 +174,7 @@ flowchart TD
   C2 -- "是" --> Y
 
   L -- "不存在" --> N{"所选策略"}
-  N -- "--merge 或默认" --> O1["git push origin HEAD:M<br/>先创建远程 MR 入口"]
+  N -- "--merge 或默认" --> O1["从 origin/T 创建远程 M 占位<br/>避免冲突态与远程 MR 分叉"]
   O1 --> O2["git switch -C M origin/T"]
   O2 --> O3["merge B<br/>从目标分支合入当前业务分支"]
   O3 --> C3{"冲突?"}

@@ -82,15 +82,12 @@ export async function createMrByMerge(targetBranch: string, context: any) {
         return
       }
 
-      await createRemoteMrBranch(mrBranch, context)
+      await createRemoteMrBranch(mrBranch, targetBranch, context)
     }
 
-    const requestCreated = await createInitialRequestIfNeeded(
-      mrBranch,
-      targetBranch,
-      existingMr.mergedToTarget,
-      context,
-    )
+    const requestCreated = existingMr.exists
+      ? await createInitialRequestIfNeeded(mrBranch, targetBranch, existingMr.mergedToTarget, context)
+      : false
     await prepareLocalMrBranch(mrBranch, targetBranch, existingMr.exists, context)
     await mergeCurrentBranch(mrBranch, currentBranch, targetBranch, requestCreated, context)
     await mergeTargetBranch(mrBranch, targetBranch, context)
@@ -150,9 +147,9 @@ async function prepareExistingMrBranch(
   return { exists: true, mergedToTarget: mrMergedTarget, done: false }
 }
 
-async function createRemoteMrBranch(mrBranch: string, context: any) {
-  context.ui.step('创建', '远程 MR 分支不存在，先推送当前分支作为合并请求入口。')
-  await git(['push', 'origin', `HEAD:${mrBranch}`], context, {
+async function createRemoteMrBranch(mrBranch: string, targetBranch: string, context: any) {
+  context.ui.step('创建', `远程 MR 分支不存在，从 origin/${targetBranch} 创建 ${mrBranch}。`)
+  await git(['push', 'origin', `refs/remotes/origin/${targetBranch}:refs/heads/${mrBranch}`], context, {
     label: `推送 ${mrBranch}`,
     mutates: true,
   })

@@ -1,6 +1,6 @@
 {
   "name": "mr",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "CNB merge request helper CLI.",
   "keywords": [
     "cli",

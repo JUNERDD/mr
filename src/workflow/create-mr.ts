@@ -16,6 +16,7 @@ import {
 } from '../git/client.js'
 import { rewriteRebaseConflictMarkers } from '../git/conflicts.js'
 import { run } from '../runtime/runner.js'
+import { deleteRemoteMrBranchIfRequested } from './delete-mr-branch.js'
 import { createMrByMerge } from './merge-mr.js'
 import { getActiveMrMerge } from './merge-resume.js'
 import { createMrByMergeTarget } from './merge-target-mr.js'
@@ -51,6 +52,11 @@ export async function createMrFromTargetBranch(targetBranch: string, context: an
 
   const strategy = await resolveMrStrategy(context)
   if (strategy === 'pr') {
+    if (context.deleteMrBranch) {
+      throw new CliError('--rm-mr 不能和 pr 策略一起使用。', {
+        next: ['改用 --merge / --rebase / --merge-target，或去掉 --rm-mr。'],
+      })
+    }
     await createPrFromCurrentBranch(targetBranch, context)
     return
   }
@@ -63,7 +69,7 @@ export async function createMrFromTargetBranch(targetBranch: string, context: an
 
   const currentBranch = await getCurrentBranch(context)
   const mrBranch = mrBranchName(targetBranch, currentBranch)
-  if (!context.dryRun && (await remoteBranchExists(mrBranch, context))) {
+  if (!context.deleteMrBranch && !context.dryRun && (await remoteBranchExists(mrBranch, context))) {
     const handled = await createMrByMerge(targetBranch, context, { existingOnly: strategy !== 'merge' })
     if (handled) {
       return
@@ -124,8 +130,11 @@ async function createMrByRebase(targetBranch: string, context: any) {
       return
     }
 
+    await deleteRemoteMrBranchIfRequested(mrBranch, context)
     const forkPoint = await getMergeBase(`origin/${targetBranch}`, currentBranch, context)
-    const existingMr = await prepareExistingMrBranch(mrBranch, targetBranch, currentBranch, forkPoint, context)
+    const existingMr = context.deleteMrBranch
+      ? { done: false }
+      : await prepareExistingMrBranch(mrBranch, targetBranch, currentBranch, forkPoint, context)
 
     if (existingMr.done) {
       return

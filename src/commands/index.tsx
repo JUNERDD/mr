@@ -19,6 +19,7 @@ export const description = `从目标分支准备 CNB 合并请求分支，并�
   mr                         交互式选择 master / test / prerelease
   mrm                        创建到 master 的合并请求
   mrt --dry-run              预览创建到 test 的执行计划
+  mrt --rm-mr                先删除对应 MR 分支，再创建到 test
   mrp --verbose              创建到 prerelease，并显示完整命令输出
   mr release/2026-05         指定任意目标分支
 
@@ -78,6 +79,7 @@ export const options = zod.object({
   merge: zod.boolean().describe(describedFlag('临时覆盖为 merge 策略；未指定策略时读取 mr --config', '按配置')),
   rebase: zod.boolean().describe(describedFlag('临时覆盖为 rebase 策略', '未指定')),
   mergeTarget: zod.boolean().describe(describedFlag('临时覆盖为 merge-target 策略', '未指定')),
+  rmMr: zod.boolean().describe(describedFlag('执行 MR 分支策略前先删除对应远程 MR 分支')),
 })
 
 type CommandArgs = zod.infer<typeof args>
@@ -154,6 +156,7 @@ function resolveMaintenanceOptions(options: CommandOptions, targetArg?: string) 
     options.merge ? '--merge' : null,
     options.rebase ? '--rebase' : null,
     options.mergeTarget ? '--merge-target' : null,
+    options.rmMr ? '--rm-mr' : null,
   ].filter(Boolean)
 
   if (commands.length && mrWorkflowOptions.length) {
@@ -189,6 +192,7 @@ export default function Index({ args: commandArgs, options: commandOptions }: Pr
     () =>
       createContext({
         color: colorOptionFromArgv(argv),
+        deleteMrBranch: commandOptions.rmMr,
         dryRun: commandOptions.dryRun,
         merge: commandOptions.merge,
         mergeTarget: commandOptions.mergeTarget,

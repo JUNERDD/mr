@@ -10,6 +10,7 @@ import {
   remoteBranchExists,
 } from '../git/client.js'
 import { run } from '../runtime/runner.js'
+import { deleteRemoteMrBranchIfRequested } from './delete-mr-branch.js'
 import { getActiveMrMerge, resumeActiveMrMerge } from './merge-resume.js'
 import { restoreInitialBranch, withRecoveryDetails } from './recovery.js'
 
@@ -70,7 +71,10 @@ export async function createMrByMergeTarget(targetBranch: string, context: any) 
       return
     }
 
-    const existingMr = await prepareExistingMrBranch(mrBranch, targetBranch, currentBranch, context)
+    await deleteRemoteMrBranchIfRequested(mrBranch, context)
+    const existingMr = context.deleteMrBranch
+      ? { done: false }
+      : await prepareExistingMrBranch(mrBranch, targetBranch, currentBranch, context)
     if (existingMr.done) {
       return
     }

@@ -20,6 +20,7 @@ mr --config # 交互式设置默认 MR 策略
 
 ```sh
 mr test --dry-run       # 只看计划，不修改本地或远程状态
+mr test --rm-mr         # 先删除对应远程 MR 分支，再按所选策略重建
 mr test --pr            # 直接用当前分支创建到 test 的 PR，不创建 mr/* 分支
 mr test --verbose       # 输出实际执行的 git 命令和完整输出
 mr test --quiet         # 只输出错误
@@ -98,7 +99,8 @@ curl -fsSL https://raw.githubusercontent.com/JUNERDD/mr/main/install.sh | bash
 
 - 当前分支已经合入目标分支：直接退出，不创建 PR。
 - 默认等同于 `--merge`：从目标分支准备 MR 分支，再把当前分支 merge 进去。
-- 远程 MR 分支已存在：统一复用已有 MR 分支，合入当前分支并同步目标分支。
+- 远程 MR 分支已存在：默认统一复用已有 MR 分支，合入当前分支并同步目标分支。
+- `--rm-mr`：在 MR 分支策略中，当前分支尚未合入目标分支时，先删除对应远程 `mr/<target>/<current>` 分支，再按所选策略重建；不能和 `--pr` 一起使用。
 - 远程 MR 分支不存在：默认 `--merge` 会先从目标分支创建远程 MR 分支占位，再在本地从目标分支准备 MR 分支并合入当前分支。
 - 远程 MR 分支检查使用完整 `refs/heads/<branch>` 精确匹配；如果检查后拉取 MR 分支时远端分支已消失，会按“不存在”继续创建或重新生成。
 - `--pr`：不创建 `mr/*` 分支，直接推送当前分支并用当前分支创建到目标分支的 PR。
@@ -144,7 +146,7 @@ mr --config --unset
 ```mermaid
 flowchart TD
   A["执行 mr*<br/>mr / mrm / mrt / mrp / mr &lt;target&gt;"] --> B["解析目标分支 T<br/>mrm=master, mrt=test, mrp=prerelease"]
-  B --> C["解析策略<br/>--pr 或 --merge / --rebase / --merge-target<br/>mr --config / git config 可设置默认"]
+  B --> C["解析策略<br/>--pr 或 --merge / --rebase / --merge-target<br/>可加 --rm-mr 先删远程 M<br/>mr --config / git config 可设置默认"]
   C --> D["要求 tracked 工作区干净<br/>fetch origin/T"]
   D --> E{"当前是否处于 M 的<br/>未完成 merge/rebase 状态?"}
 
@@ -162,7 +164,11 @@ flowchart TD
   PR1 --> PR2["确认 PR<br/>git cnb pull create -H B -B T"]
   PR2 --> U
 
-  PR -- "否" --> L{"远程 MR 分支<br/>refs/heads/M 是否精确存在?"}
+  PR -- "否" --> RM{"是否 --rm-mr?"}
+
+  RM -- "是" --> RM1["删除远程 M<br/>不存在则继续"]
+  RM1 --> N{"所选策略"}
+  RM -- "否" --> L{"远程 MR 分支<br/>refs/heads/M 是否精确存在?"}
 
   L -- "存在" --> M1["统一复用 origin/M<br/>不按策略重建"]
   M1 --> M0{"fetch origin/M<br/>是否成功?"}
@@ -176,7 +182,7 @@ flowchart TD
   C2 -- "否" --> P["push M"]
   C2 -- "是" --> Y
 
-  L -- "不存在" --> N{"所选策略"}
+  L -- "不存在" --> N
   N -- "--merge 或默认" --> O1["从 origin/T 创建远程 M 占位<br/>避免冲突态与远程 MR 分叉"]
   O1 --> O2["git switch -C M origin/T"]
   O2 --> O3["merge B<br/>从目标分支合入当前业务分支"]
@@ -218,6 +224,7 @@ flowchart TD
 - 如果旧安装目录只有 `dist/` 而缺少 `install.sh` / `uninstall.sh`，`--update` / `--uninstall` 会回退到 GitHub 上的官方脚本，并沿用当前安装目录和命令目录。
 - `--version` 输出当前版本。
 - `--dry-run` 展示可能执行的 git / CNB 命令，不修改本地分支、远程分支或创建合并请求。
+- `--rm-mr` 先删除对应远程 MR 分支，再按 `--merge`、`--rebase` 或 `--merge-target` 重建。
 - `--pr`、`--merge`、`--rebase`、`--merge-target` 可临时覆盖 `mr.strategy` 配置。
 - 默认输出只保留关键步骤；`--verbose` 才展示完整命令和完整输出。
 - 错误会给出可执行的下一步，例如缺少依赖、目标分支不存在、工作区不干净或合并冲突。

@@ -10,11 +10,11 @@ import {
   remoteBranchExists,
 } from '../git/client.js'
 import { run } from '../runtime/runner.js'
+import { deleteRemoteMrBranchIfRequested } from './delete-mr-branch.js'
 import { getActiveMrMerge, resumeActiveMrMerge } from './merge-resume.js'
 import { restoreInitialBranch, withRecoveryDetails } from './recovery.js'
 
 class MergeConflictError extends CliError {}
-
 type CreateMrByMergeOptions = { existingOnly?: boolean }
 
 async function createPullRequest(
@@ -72,23 +72,20 @@ export async function createMrByMerge(
 
     await refreshTargetBranch(targetBranch, context)
     const currentMergedTarget = await isAncestor(currentBranch, `origin/${targetBranch}`, context)
-    const existingMr = await prepareExistingMrBranch(
-      mrBranch,
-      targetBranch,
-      currentBranch,
-      currentMergedTarget,
-      context,
-    )
+    if (currentMergedTarget) {
+      ui.panel('无需操作', [`${currentBranch} 已经合入 ${targetBranch}。`], { tone: 'success' })
+      return true
+    }
+
+    await deleteRemoteMrBranchIfRequested(mrBranch, context)
+    const existingMr = context.deleteMrBranch
+      ? { exists: false, mergedToTarget: false, done: false }
+      : await prepareExistingMrBranch(mrBranch, targetBranch, currentBranch, context)
     if (existingMr.done) {
       return true
     }
 
     if (!existingMr.exists) {
-      if (currentMergedTarget) {
-        ui.panel('无需操作', [`${currentBranch} 已经合入 ${targetBranch}。`], { tone: 'success' })
-        return true
-      }
-
       if (existingOnly) {
         return false
       }
@@ -122,13 +119,7 @@ async function refreshTargetBranch(targetBranch: string, context: any) {
   await fetchRemoteBranch(targetBranch, context)
 }
 
-async function prepareExistingMrBranch(
-  mrBranch: string,
-  targetBranch: string,
-  currentBranch: string,
-  currentMergedTarget: boolean,
-  context: any,
-) {
+async function prepareExistingMrBranch(mrBranch: string, targetBranch: string, currentBranch: string, context: any) {
   if (!(await remoteBranchExists(mrBranch, context))) {
     return { exists: false, mergedToTarget: false, done: false }
   }
@@ -142,11 +133,6 @@ async function prepareExistingMrBranch(
   }
 
   const mrMergedTarget = await isAncestor(`origin/${mrBranch}`, `origin/${targetBranch}`, context)
-
-  if (currentMergedTarget) {
-    ui.panel('无需操作', [`${currentBranch} 已经合入 ${targetBranch}。`], { tone: 'success' })
-    return { exists: true, mergedToTarget: mrMergedTarget, done: true }
-  }
 
   if (mrMergedTarget) {
     ui.step('准备', `使用已有 MR 分支，并合入 ${currentBranch} 与 origin/${targetBranch}。`)

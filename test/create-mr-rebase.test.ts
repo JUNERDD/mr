@@ -569,6 +569,93 @@ test('reuses an existing MR branch regardless of the requested MR strategy', asy
   }
 }, 60_000)
 
+test('removes an existing MR branch before recreating it when requested', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mr-rm-mr-'))
+  const originalCwd = process.cwd()
+  const originalPath = process.env.PATH
+
+  try {
+    const remote = join(root, 'origin.git')
+    const repo = join(root, 'repo')
+    const bin = join(root, 'bin')
+    await mkdir(repo)
+    await mkdir(bin)
+    await writeFile(
+      join(bin, 'git-cnb'),
+      [
+        '#!/bin/sh',
+        'if [ "$1" = "-h" ]; then exit 0; fi',
+        'if [ "$1" = "pull" ] && [ "$2" = "create" ]; then exit 0; fi',
+        'echo "unexpected git cnb $*" >&2',
+        'exit 1',
+        '',
+      ].join('\n'),
+    )
+    await chmod(join(bin, 'git-cnb'), 0o755)
+
+    await git(root, ['init', '--bare', remote])
+    await git(repo, ['init'])
+    await git(repo, ['config', 'user.name', 'Test User'])
+    await git(repo, ['config', 'user.email', 'test@example.com'])
+    await writeFile(join(repo, 'README.md'), 'base\n')
+    await git(repo, ['add', 'README.md'])
+    await git(repo, ['commit', '-m', 'base'])
+    await git(repo, ['branch', '-M', 'main'])
+    await git(repo, ['remote', 'add', 'origin', remote])
+    await git(repo, ['push', '-u', 'origin', 'main'])
+
+    await git(repo, ['switch', '-c', 'test'])
+    await writeFile(join(repo, 'target.txt'), 'target\n')
+    await git(repo, ['add', 'target.txt'])
+    await git(repo, ['commit', '-m', 'target'])
+    await git(repo, ['push', '-u', 'origin', 'test'])
+
+    await git(repo, ['switch', 'main'])
+    await git(repo, ['switch', '-c', 'feature/demo'])
+    await writeFile(join(repo, 'feature.txt'), 'feature\n')
+    await git(repo, ['add', 'feature.txt'])
+    await git(repo, ['commit', '-m', 'feature'])
+
+    await git(repo, ['switch', '-c', 'mr/test/feature/demo'])
+    await writeFile(join(repo, 'mr-only.txt'), 'stale\n')
+    await git(repo, ['add', 'mr-only.txt'])
+    await git(repo, ['commit', '-m', 'stale mr'])
+    await git(repo, ['push', '-u', 'origin', 'HEAD:mr/test/feature/demo'])
+    await git(repo, ['switch', 'feature/demo'])
+
+    process.chdir(repo)
+    process.env.PATH = `${bin}:${originalPath ?? ''}`
+
+    const context = createContext({
+      deleteMrBranch: true,
+      ui: createUi({
+        quiet: true,
+        stream: {
+          isTTY: false,
+          write() {
+            return true
+          },
+        } as any,
+      }),
+    })
+
+    await createMrFromTargetBranch('test', context)
+
+    assert.equal(await gitOutput(repo, ['branch', '--show-current']), 'feature/demo')
+    await git(repo, ['merge-base', '--is-ancestor', 'origin/test', 'origin/mr/test/feature/demo'])
+    await git(repo, ['merge-base', '--is-ancestor', 'feature/demo', 'origin/mr/test/feature/demo'])
+    await assert.rejects(execFileAsync('git', ['show', 'origin/mr/test/feature/demo:mr-only.txt'], { cwd: repo }))
+  } finally {
+    process.chdir(originalCwd)
+    if (originalPath === undefined) {
+      delete process.env.PATH
+    } else {
+      process.env.PATH = originalPath
+    }
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('creates the MR branch from current changes before merging the target when requested', async () => {
   const root = await mkdtemp(join(tmpdir(), 'mr-merge-target-'))
   const originalCwd = process.cwd()

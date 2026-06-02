@@ -151,6 +151,17 @@ test('buildDryRunCommands includes the core MR workflow', () => {
   ])
 })
 
+test('buildDryRunCommands includes MR branch deletion when requested', () => {
+  const commands = buildDryRunCommands('test', 'feature/demo', 'merge', { deleteMrBranch: true })
+  const rendered = commands.map(({ command, args }) => formatCommand(command, args))
+
+  assert.deepEqual(rendered.slice(0, 3), [
+    'git fetch origin +refs/heads/test:refs/remotes/origin/test',
+    'git ls-remote --exit-code --heads origin refs/heads/mr/test/feature/demo',
+    'git push origin :refs/heads/mr/test/feature/demo',
+  ])
+})
+
 test('buildDryRunCommands supports the rebase strategy', () => {
   const commands = buildDryRunCommands('test', 'feature/demo', 'rebase')
   const rendered = commands.map(({ command, args }) => formatCommand(command, args))

@@ -1,5 +1,7 @@
 import type { MrStrategy } from './settings.js'
 
+type DryRunOptions = { deleteMrBranch?: boolean }
+
 export function mrBranchName(targetBranch: string, currentBranch: string) {
   return `mr/${targetBranch}/${currentBranch}`
 }
@@ -12,11 +14,16 @@ function remoteFetchRefspec(branch: string) {
   return `+${remoteHeadRef(branch)}:refs/remotes/origin/${branch}`
 }
 
-export function buildDryRunCommands(targetBranch: string, currentBranch: string, strategy: MrStrategy = 'merge') {
+export function buildDryRunCommands(
+  targetBranch: string,
+  currentBranch: string,
+  strategy: MrStrategy = 'merge',
+  options: DryRunOptions = {},
+) {
   const mrBranch = mrBranchName(targetBranch, currentBranch)
 
   if (strategy === 'rebase') {
-    return buildRebaseDryRunCommands(targetBranch, currentBranch, mrBranch)
+    return buildRebaseDryRunCommands(targetBranch, currentBranch, mrBranch, options)
   }
 
   if (strategy === 'pr') {
@@ -24,13 +31,30 @@ export function buildDryRunCommands(targetBranch: string, currentBranch: string,
   }
 
   if (strategy === 'merge-target') {
-    return buildMergeTargetDryRunCommands(targetBranch, currentBranch, mrBranch)
+    return buildMergeTargetDryRunCommands(targetBranch, currentBranch, mrBranch, options)
   }
 
-  return buildMergeDryRunCommands(targetBranch, currentBranch, mrBranch)
+  return buildMergeDryRunCommands(targetBranch, currentBranch, mrBranch, options)
 }
 
-function buildMergeDryRunCommands(targetBranch: string, currentBranch: string, mrBranch: string) {
+function deleteMrBranchDryRunCommands(mrBranch: string, options: DryRunOptions) {
+  return options.deleteMrBranch
+    ? [
+        {
+          label: `删除远程 MR 分支 origin/${mrBranch}`,
+          command: 'git',
+          args: ['push', 'origin', `:${remoteHeadRef(mrBranch)}`],
+        },
+      ]
+    : []
+}
+
+function buildMergeDryRunCommands(
+  targetBranch: string,
+  currentBranch: string,
+  mrBranch: string,
+  options: DryRunOptions,
+) {
   return [
     {
       label: `刷新 origin/${targetBranch}`,
@@ -42,6 +66,7 @@ function buildMergeDryRunCommands(targetBranch: string, currentBranch: string, m
       command: 'git',
       args: ['ls-remote', '--exit-code', '--heads', 'origin', remoteHeadRef(mrBranch)],
     },
+    ...deleteMrBranchDryRunCommands(mrBranch, options),
     {
       label: `必要时从目标分支创建远程 MR 分支 ${mrBranch}`,
       command: 'git',
@@ -100,7 +125,12 @@ function buildPrDryRunCommands(targetBranch: string, currentBranch: string) {
   ]
 }
 
-function buildRebaseDryRunCommands(targetBranch: string, currentBranch: string, mrBranch: string) {
+function buildRebaseDryRunCommands(
+  targetBranch: string,
+  currentBranch: string,
+  mrBranch: string,
+  options: DryRunOptions,
+) {
   return [
     {
       label: `刷新 origin/${targetBranch}`,
@@ -112,6 +142,7 @@ function buildRebaseDryRunCommands(targetBranch: string, currentBranch: string, 
       command: 'git',
       args: ['ls-remote', '--exit-code', '--heads', 'origin', remoteHeadRef(mrBranch)],
     },
+    ...deleteMrBranchDryRunCommands(mrBranch, options),
     {
       label: `从当前分支重建本地 MR 分支 ${mrBranch}`,
       command: 'git',
@@ -145,7 +176,12 @@ function buildRebaseDryRunCommands(targetBranch: string, currentBranch: string, 
   ]
 }
 
-function buildMergeTargetDryRunCommands(targetBranch: string, currentBranch: string, mrBranch: string) {
+function buildMergeTargetDryRunCommands(
+  targetBranch: string,
+  currentBranch: string,
+  mrBranch: string,
+  options: DryRunOptions,
+) {
   return [
     {
       label: `刷新 origin/${targetBranch}`,
@@ -157,6 +193,7 @@ function buildMergeTargetDryRunCommands(targetBranch: string, currentBranch: str
       command: 'git',
       args: ['ls-remote', '--exit-code', '--heads', 'origin', remoteHeadRef(mrBranch)],
     },
+    ...deleteMrBranchDryRunCommands(mrBranch, options),
     {
       label: `从当前分支准备本地 MR 分支 ${mrBranch}`,
       command: 'git',
@@ -200,7 +237,9 @@ export function printDryRun(targetBranch: string, currentBranch: string, context
   ])
 
   ui.status('info', `整合策略: ${strategy}`)
-  for (const command of buildDryRunCommands(targetBranch, currentBranch, strategy)) {
+  for (const command of buildDryRunCommands(targetBranch, currentBranch, strategy, {
+    deleteMrBranch: context.deleteMrBranch && strategy !== 'pr',
+  })) {
     ui.status('plan', command.label)
     ui.command(command.command, command.args)
   }

@@ -122,6 +122,48 @@ export async function hasNoUncontestedTreeChanges(
   })
 }
 
+export function remoteHeadRef(branch: string) {
+  return `refs/heads/${branch}`
+}
+
+export function remoteTrackingRef(branch: string) {
+  return `refs/remotes/origin/${branch}`
+}
+
+export function remoteFetchRefspec(branch: string) {
+  return `+${remoteHeadRef(branch)}:${remoteTrackingRef(branch)}`
+}
+
+export async function fetchRemoteBranch(
+  branch: string,
+  context: any,
+  { allowMissing = false, label = `刷新 origin/${branch}` } = {},
+) {
+  const result = await git(['fetch', 'origin', remoteFetchRefspec(branch)], context, {
+    allowFailure: true,
+    label,
+    mutates: true,
+    quiet: allowMissing,
+  })
+
+  if (result.exitCode === 0) {
+    if (allowMissing) {
+      context.ui.status('ok', label)
+    }
+    return true
+  }
+
+  if (allowMissing && isMissingRemoteRef(result.all)) {
+    return false
+  }
+
+  throw new CliError(`无法刷新远程分支: origin/${branch}`, {
+    exitCode: result.exitCode || 1,
+    details: compactOutput(result.all),
+    next: ['确认网络、仓库权限和 origin 远程配置。'],
+  })
+}
+
 async function getReplayCommitSignatures(base: string, head: string, context: any): Promise<string[]> {
   const result = await git(
     ['log', '--reverse', '--topo-order', '--no-merges', '--format=%aI%x1f%an%x1f%ae%x1f%B%x1e', `${base}..${head}`],
@@ -164,7 +206,7 @@ async function getChangedPaths(base: string, head: string, context: any): Promis
 }
 
 export async function remoteBranchExists(branch: string, context: any) {
-  const result = await git(['ls-remote', '--exit-code', '--heads', 'origin', branch], context, {
+  const result = await git(['ls-remote', '--exit-code', '--heads', 'origin', remoteHeadRef(branch)], context, {
     quiet: true,
     allowFailure: true,
   })
@@ -182,6 +224,10 @@ export async function remoteBranchExists(branch: string, context: any) {
     details: compactOutput(result.all),
     next: ['确认网络、仓库权限和 origin 远程配置。'],
   })
+}
+
+function isMissingRemoteRef(output: unknown) {
+  return /couldn'?t find remote ref|could not find remote ref/iu.test(String(output ?? ''))
 }
 
 export async function getCurrentBranch(context: any) {

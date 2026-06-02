@@ -4,6 +4,14 @@ export function mrBranchName(targetBranch: string, currentBranch: string) {
   return `mr/${targetBranch}/${currentBranch}`
 }
 
+function remoteHeadRef(branch: string) {
+  return `refs/heads/${branch}`
+}
+
+function remoteFetchRefspec(branch: string) {
+  return `+${remoteHeadRef(branch)}:refs/remotes/origin/${branch}`
+}
+
 export function buildDryRunCommands(targetBranch: string, currentBranch: string, strategy: MrStrategy = 'merge') {
   const mrBranch = mrBranchName(targetBranch, currentBranch)
 
@@ -27,12 +35,12 @@ function buildMergeDryRunCommands(targetBranch: string, currentBranch: string, m
     {
       label: `刷新 origin/${targetBranch}`,
       command: 'git',
-      args: ['fetch', 'origin', `+${targetBranch}:refs/remotes/origin/${targetBranch}`],
+      args: ['fetch', 'origin', remoteFetchRefspec(targetBranch)],
     },
     {
       label: `检查远程 MR 分支 origin/${mrBranch}`,
       command: 'git',
-      args: ['ls-remote', '--exit-code', '--heads', 'origin', mrBranch],
+      args: ['ls-remote', '--exit-code', '--heads', 'origin', remoteHeadRef(mrBranch)],
     },
     {
       label: `必要时从目标分支创建远程 MR 分支 ${mrBranch}`,
@@ -77,7 +85,7 @@ function buildPrDryRunCommands(targetBranch: string, currentBranch: string) {
     {
       label: `刷新 origin/${targetBranch}`,
       command: 'git',
-      args: ['fetch', 'origin', `+${targetBranch}:refs/remotes/origin/${targetBranch}`],
+      args: ['fetch', 'origin', remoteFetchRefspec(targetBranch)],
     },
     {
       label: `推送当前分支 ${currentBranch}`,
@@ -97,12 +105,12 @@ function buildRebaseDryRunCommands(targetBranch: string, currentBranch: string, 
     {
       label: `刷新 origin/${targetBranch}`,
       command: 'git',
-      args: ['fetch', 'origin', `+${targetBranch}:refs/remotes/origin/${targetBranch}`],
+      args: ['fetch', 'origin', remoteFetchRefspec(targetBranch)],
     },
     {
       label: `检查远程 MR 分支 origin/${mrBranch}`,
       command: 'git',
-      args: ['ls-remote', '--exit-code', '--heads', 'origin', mrBranch],
+      args: ['ls-remote', '--exit-code', '--heads', 'origin', remoteHeadRef(mrBranch)],
     },
     {
       label: `从当前分支重建本地 MR 分支 ${mrBranch}`,
@@ -142,12 +150,12 @@ function buildMergeTargetDryRunCommands(targetBranch: string, currentBranch: str
     {
       label: `刷新 origin/${targetBranch}`,
       command: 'git',
-      args: ['fetch', 'origin', `+${targetBranch}:refs/remotes/origin/${targetBranch}`],
+      args: ['fetch', 'origin', remoteFetchRefspec(targetBranch)],
     },
     {
       label: `检查远程 MR 分支 origin/${mrBranch}`,
       command: 'git',
-      args: ['ls-remote', '--exit-code', '--heads', 'origin', mrBranch],
+      args: ['ls-remote', '--exit-code', '--heads', 'origin', remoteHeadRef(mrBranch)],
     },
     {
       label: `从当前分支准备本地 MR 分支 ${mrBranch}`,

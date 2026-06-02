@@ -100,6 +100,7 @@ curl -fsSL https://raw.githubusercontent.com/JUNERDD/mr/main/install.sh | bash
 - 默认等同于 `--merge`：从目标分支准备 MR 分支，再把当前分支 merge 进去。
 - 远程 MR 分支已存在：统一复用已有 MR 分支，合入当前分支并同步目标分支。
 - 远程 MR 分支不存在：默认 `--merge` 会先从目标分支创建远程 MR 分支占位，再在本地从目标分支准备 MR 分支并合入当前分支。
+- 远程 MR 分支检查使用完整 `refs/heads/<branch>` 精确匹配；如果检查后拉取 MR 分支时远端分支已消失，会按“不存在”继续创建或重新生成。
 - `--pr`：不创建 `mr/*` 分支，直接推送当前分支并用当前分支创建到目标分支的 PR。
 - merge 冲突：处于 MR 分支的待解决冲突状态；解决后 `git add <files>`，再重新运行 `mr <target>` / `mrt` 提交合并结果、推送并创建 PR。
 - `--rebase`：从当前分支准备 MR 分支，再 rebase 到目标分支。
@@ -161,10 +162,12 @@ flowchart TD
   PR1 --> PR2["确认 PR<br/>git cnb pull create -H B -B T"]
   PR2 --> U
 
-  PR -- "否" --> L{"远程 MR 分支<br/>origin/M 是否存在?"}
+  PR -- "否" --> L{"远程 MR 分支<br/>refs/heads/M 是否精确存在?"}
 
   L -- "存在" --> M1["统一复用 origin/M<br/>不按策略重建"]
-  M1 --> M2["git switch -C M origin/M"]
+  M1 --> M0{"fetch origin/M<br/>是否成功?"}
+  M0 -- "成功" --> M2["git switch -C M origin/M"]
+  M0 -- "分支已消失" --> N
   M2 --> M3["merge B<br/>把当前业务改动合入已有 MR 分支"]
   M3 --> C1{"冲突?"}
   C1 -- "否" --> M4["merge origin/T<br/>同步目标分支"]

@@ -2,6 +2,7 @@ import { mrBranchName, printDryRun } from '../core/dry-run.js'
 import { CliError, compactOutput } from '../core/errors.js'
 import {
   ensureCleanWorkingTree,
+  fetchRemoteBranch,
   getCurrentBranch,
   getTrackedWorkingTreeStatus,
   git,
@@ -13,6 +14,8 @@ import { getActiveMrMerge, resumeActiveMrMerge } from './merge-resume.js'
 import { restoreInitialBranch, withRecoveryDetails } from './recovery.js'
 
 class MergeConflictError extends CliError {}
+
+type CreateMrByMergeOptions = { existingOnly?: boolean }
 
 async function createPullRequest(
   mrBranch: string,
@@ -29,12 +32,16 @@ async function createPullRequest(
   })
 }
 
-export async function createMrByMerge(targetBranch: string, context: any) {
+export async function createMrByMerge(
+  targetBranch: string,
+  context: any,
+  { existingOnly = false }: CreateMrByMergeOptions = {},
+): Promise<boolean> {
   const { ui } = context
   const activeMerge = await getActiveMrMerge(targetBranch, context)
   if (activeMerge) {
     await resumeActiveMrMerge(activeMerge, targetBranch, context, pushAndEnsureRequest)
-    return
+    return true
   }
 
   const currentBranch = await getCurrentBranch(context)
@@ -46,7 +53,7 @@ export async function createMrByMerge(targetBranch: string, context: any) {
       ui.status('warn', '工作区存在 tracked 改动；真实执行会先停止。')
     }
 
-    return
+    return true
   }
 
   await ensureCleanWorkingTree(context)
@@ -73,13 +80,17 @@ export async function createMrByMerge(targetBranch: string, context: any) {
       context,
     )
     if (existingMr.done) {
-      return
+      return true
     }
 
     if (!existingMr.exists) {
       if (currentMergedTarget) {
         ui.panel('无需操作', [`${currentBranch} 已经合入 ${targetBranch}。`], { tone: 'success' })
-        return
+        return true
+      }
+
+      if (existingOnly) {
+        return false
       }
 
       await createRemoteMrBranch(mrBranch, targetBranch, context)
@@ -103,14 +114,12 @@ export async function createMrByMerge(targetBranch: string, context: any) {
   }
 
   ui.panel('完成', [`合并请求  ${mrBranch} -> ${targetBranch}`, `已回到    ${currentBranch}`], { tone: 'success' })
+  return true
 }
 
 async function refreshTargetBranch(targetBranch: string, context: any) {
   context.ui.step('检查', `刷新目标分支 origin/${targetBranch}。`)
-  await git(['fetch', 'origin', `+${targetBranch}:refs/remotes/origin/${targetBranch}`], context, {
-    label: `刷新 origin/${targetBranch}`,
-    mutates: true,
-  })
+  await fetchRemoteBranch(targetBranch, context)
 }
 
 async function prepareExistingMrBranch(
@@ -126,10 +135,11 @@ async function prepareExistingMrBranch(
 
   const { ui } = context
   ui.step('检查', '发现远程 MR 分支，拉取最新状态。')
-  await git(['fetch', 'origin', `+${mrBranch}:refs/remotes/origin/${mrBranch}`], context, {
-    label: `刷新 origin/${mrBranch}`,
-    mutates: true,
-  })
+  const fetched = await fetchRemoteBranch(mrBranch, context, { allowMissing: true })
+  if (!fetched) {
+    ui.status('warn', `远程 MR 分支 origin/${mrBranch} 已不存在，将按不存在处理。`)
+    return { exists: false, mergedToTarget: false, done: false }
+  }
 
   const mrMergedTarget = await isAncestor(`origin/${mrBranch}`, `origin/${targetBranch}`, context)
 
@@ -153,10 +163,7 @@ async function createRemoteMrBranch(mrBranch: string, targetBranch: string, cont
     label: `推送 ${mrBranch}`,
     mutates: true,
   })
-  await git(['fetch', 'origin', `+${mrBranch}:refs/remotes/origin/${mrBranch}`], context, {
-    label: `刷新 origin/${mrBranch}`,
-    mutates: true,
-  })
+  await fetchRemoteBranch(mrBranch, context)
 }
 
 async function createInitialRequestIfNeeded(

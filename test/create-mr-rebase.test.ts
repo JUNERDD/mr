@@ -102,6 +102,208 @@ test('creates the MR branch by merging current changes by default', async () => 
   }
 })
 
+test('does not reuse a remote branch that only suffix-matches the MR branch name', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mr-suffix-match-'))
+  const originalCwd = process.cwd()
+  const originalPath = process.env.PATH
+
+  try {
+    const remote = join(root, 'origin.git')
+    const repo = join(root, 'repo')
+    const bin = join(root, 'bin')
+    await mkdir(repo)
+    await mkdir(bin)
+    await writeFile(
+      join(bin, 'git-cnb'),
+      [
+        '#!/bin/sh',
+        'if [ "$1" = "-h" ]; then exit 0; fi',
+        'if [ "$1" = "pull" ] && [ "$2" = "create" ]; then exit 1; fi',
+        'echo "unexpected git cnb $*" >&2',
+        'exit 1',
+        '',
+      ].join('\n'),
+    )
+    await chmod(join(bin, 'git-cnb'), 0o755)
+
+    await git(root, ['init', '--bare', remote])
+    await git(repo, ['init'])
+    await git(repo, ['config', 'user.name', 'Test User'])
+    await git(repo, ['config', 'user.email', 'test@example.com'])
+    await writeFile(join(repo, 'README.md'), 'base\n')
+    await git(repo, ['add', 'README.md'])
+    await git(repo, ['commit', '-m', 'base'])
+    await git(repo, ['branch', '-M', 'main'])
+    await git(repo, ['remote', 'add', 'origin', remote])
+    await git(repo, ['push', '-u', 'origin', 'main'])
+
+    await git(repo, ['switch', '-c', 'test'])
+    await writeFile(join(repo, 'target.txt'), 'target\n')
+    await git(repo, ['add', 'target.txt'])
+    await git(repo, ['commit', '-m', 'target'])
+    await git(repo, ['push', '-u', 'origin', 'test'])
+
+    await git(repo, ['switch', 'main'])
+    await git(repo, ['switch', '-c', 'feature/demo'])
+    await writeFile(join(repo, 'feature.txt'), 'feature\n')
+    await git(repo, ['add', 'feature.txt'])
+    await git(repo, ['commit', '-m', 'feature'])
+    await git(repo, ['push', 'origin', 'HEAD:foo/mr/test/feature/demo'])
+
+    process.chdir(repo)
+    process.env.PATH = `${bin}:${originalPath ?? ''}`
+
+    const context = createContext({
+      ui: createUi({
+        quiet: true,
+        stream: {
+          isTTY: false,
+          write() {
+            return true
+          },
+        } as any,
+      }),
+    })
+
+    await createMrFromTargetBranch('test', context)
+
+    assert.equal(await gitOutput(repo, ['branch', '--show-current']), 'feature/demo')
+    await git(repo, ['merge-base', '--is-ancestor', 'origin/test', 'origin/mr/test/feature/demo'])
+    await git(repo, ['merge-base', '--is-ancestor', 'feature/demo', 'origin/mr/test/feature/demo'])
+  } finally {
+    process.chdir(originalCwd)
+    if (originalPath === undefined) {
+      delete process.env.PATH
+    } else {
+      process.env.PATH = originalPath
+    }
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('recreates the MR branch when it disappears before fetching existing state', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mr-fetch-race-'))
+  const originalCwd = process.cwd()
+  const originalPath = process.env.PATH
+  const originalRealGit = process.env.REAL_GIT
+  const originalDeleteRef = process.env.MR_DELETE_REF_ON_FETCH
+  const originalDeleteBranch = process.env.MR_DELETE_BRANCH_ON_FETCH
+  const originalRaceDone = process.env.MR_RACE_DONE
+
+  try {
+    const remote = join(root, 'origin.git')
+    const repo = join(root, 'repo')
+    const bin = join(root, 'bin')
+    const raceDone = join(root, 'race-done')
+    await mkdir(repo)
+    await mkdir(bin)
+    await writeFile(
+      join(bin, 'git-cnb'),
+      [
+        '#!/bin/sh',
+        'if [ "$1" = "-h" ]; then exit 0; fi',
+        'if [ "$1" = "pull" ] && [ "$2" = "create" ]; then exit 1; fi',
+        'echo "unexpected git cnb $*" >&2',
+        'exit 1',
+        '',
+      ].join('\n'),
+    )
+    await writeFile(
+      join(bin, 'git'),
+      [
+        '#!/bin/sh',
+        'real_git="${REAL_GIT:-git}"',
+        'if [ "$1" = "fetch" ] && [ "$2" = "origin" ] && [ "${3:-}" = "${MR_DELETE_REF_ON_FETCH:-}" ] && [ -n "${MR_DELETE_BRANCH_ON_FETCH:-}" ] && [ -n "${MR_RACE_DONE:-}" ] && [ ! -f "$MR_RACE_DONE" ]; then',
+        '  : > "$MR_RACE_DONE"',
+        '  "$real_git" push origin ":refs/heads/$MR_DELETE_BRANCH_ON_FETCH" >/dev/null 2>&1 || true',
+        'fi',
+        'exec "$real_git" "$@"',
+        '',
+      ].join('\n'),
+    )
+    await chmod(join(bin, 'git-cnb'), 0o755)
+    await chmod(join(bin, 'git'), 0o755)
+
+    await git(root, ['init', '--bare', remote])
+    await git(repo, ['init'])
+    await git(repo, ['config', 'user.name', 'Test User'])
+    await git(repo, ['config', 'user.email', 'test@example.com'])
+    await writeFile(join(repo, 'README.md'), 'base\n')
+    await git(repo, ['add', 'README.md'])
+    await git(repo, ['commit', '-m', 'base'])
+    await git(repo, ['branch', '-M', 'main'])
+    await git(repo, ['remote', 'add', 'origin', remote])
+    await git(repo, ['push', '-u', 'origin', 'main'])
+
+    await git(repo, ['switch', '-c', 'test'])
+    await writeFile(join(repo, 'target.txt'), 'target\n')
+    await git(repo, ['add', 'target.txt'])
+    await git(repo, ['commit', '-m', 'target'])
+    await git(repo, ['push', '-u', 'origin', 'test'])
+
+    await git(repo, ['switch', 'main'])
+    await git(repo, ['switch', '-c', 'feature/demo'])
+    await writeFile(join(repo, 'feature.txt'), 'feature\n')
+    await git(repo, ['add', 'feature.txt'])
+    await git(repo, ['commit', '-m', 'feature'])
+    await git(repo, ['push', 'origin', 'HEAD:mr/test/feature/demo'])
+
+    const realGit = (await execFileAsync('sh', ['-c', 'command -v git'])).stdout.trim()
+    process.chdir(repo)
+    process.env.PATH = `${bin}:${originalPath ?? ''}`
+    process.env.REAL_GIT = realGit
+    process.env.MR_DELETE_REF_ON_FETCH = '+refs/heads/mr/test/feature/demo:refs/remotes/origin/mr/test/feature/demo'
+    process.env.MR_DELETE_BRANCH_ON_FETCH = 'mr/test/feature/demo'
+    process.env.MR_RACE_DONE = raceDone
+
+    const context = createContext({
+      ui: createUi({
+        quiet: true,
+        stream: {
+          isTTY: false,
+          write() {
+            return true
+          },
+        } as any,
+      }),
+    })
+
+    await createMrFromTargetBranch('test', context)
+
+    assert.equal(await gitOutput(repo, ['branch', '--show-current']), 'feature/demo')
+    await git(repo, ['merge-base', '--is-ancestor', 'origin/test', 'origin/mr/test/feature/demo'])
+    await git(repo, ['merge-base', '--is-ancestor', 'feature/demo', 'origin/mr/test/feature/demo'])
+  } finally {
+    process.chdir(originalCwd)
+    if (originalPath === undefined) {
+      delete process.env.PATH
+    } else {
+      process.env.PATH = originalPath
+    }
+    if (originalRealGit === undefined) {
+      delete process.env.REAL_GIT
+    } else {
+      process.env.REAL_GIT = originalRealGit
+    }
+    if (originalDeleteRef === undefined) {
+      delete process.env.MR_DELETE_REF_ON_FETCH
+    } else {
+      process.env.MR_DELETE_REF_ON_FETCH = originalDeleteRef
+    }
+    if (originalDeleteBranch === undefined) {
+      delete process.env.MR_DELETE_BRANCH_ON_FETCH
+    } else {
+      process.env.MR_DELETE_BRANCH_ON_FETCH = originalDeleteBranch
+    }
+    if (originalRaceDone === undefined) {
+      delete process.env.MR_RACE_DONE
+    } else {
+      process.env.MR_RACE_DONE = originalRaceDone
+    }
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('creates a PR directly from the current branch when requested', async () => {
   const root = await mkdtemp(join(tmpdir(), 'mr-pr-'))
   const originalCwd = process.cwd()

@@ -139,8 +139,8 @@ test('buildDryRunCommands includes the core MR workflow', () => {
   const rendered = commands.map(({ command, args }) => formatCommand(command, args))
 
   assert.deepEqual(rendered, [
-    'git fetch origin +test:refs/remotes/origin/test',
-    'git ls-remote --exit-code --heads origin mr/test/feature/demo',
+    'git fetch origin +refs/heads/test:refs/remotes/origin/test',
+    'git ls-remote --exit-code --heads origin refs/heads/mr/test/feature/demo',
     'git push origin refs/remotes/origin/test:refs/heads/mr/test/feature/demo',
     'git switch -C mr/test/feature/demo origin/test',
     'git branch --set-upstream-to origin/mr/test/feature/demo mr/test/feature/demo',
@@ -156,8 +156,8 @@ test('buildDryRunCommands supports the rebase strategy', () => {
   const rendered = commands.map(({ command, args }) => formatCommand(command, args))
 
   assert.deepEqual(rendered, [
-    'git fetch origin +test:refs/remotes/origin/test',
-    'git ls-remote --exit-code --heads origin mr/test/feature/demo',
+    'git fetch origin +refs/heads/test:refs/remotes/origin/test',
+    'git ls-remote --exit-code --heads origin refs/heads/mr/test/feature/demo',
     'git switch -C mr/test/feature/demo feature/demo',
     'git merge-base origin/test feature/demo',
     'git rebase --onto origin/test MERGE_BASE mr/test/feature/demo',
@@ -172,8 +172,8 @@ test('buildDryRunCommands supports the merge-target strategy', () => {
   const rendered = commands.map(({ command, args }) => formatCommand(command, args))
 
   assert.deepEqual(rendered, [
-    'git fetch origin +test:refs/remotes/origin/test',
-    'git ls-remote --exit-code --heads origin mr/test/feature/demo',
+    'git fetch origin +refs/heads/test:refs/remotes/origin/test',
+    'git ls-remote --exit-code --heads origin refs/heads/mr/test/feature/demo',
     'git switch -C mr/test/feature/demo feature/demo',
     'git merge --no-edit origin/test',
     'git push --force-with-lease --set-upstream origin HEAD:mr/test/feature/demo',
@@ -187,7 +187,7 @@ test('buildDryRunCommands supports direct PR creation from the current branch', 
   const rendered = commands.map(({ command, args }) => formatCommand(command, args))
 
   assert.deepEqual(rendered, [
-    'git fetch origin +test:refs/remotes/origin/test',
+    'git fetch origin +refs/heads/test:refs/remotes/origin/test',
     'git push --set-upstream origin HEAD:feature/demo',
     'git cnb pull create -H feature/demo -B test',
   ])

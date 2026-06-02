@@ -2,6 +2,7 @@ import { mrBranchName, printDryRun } from '../core/dry-run.js'
 import { CliError, compactOutput } from '../core/errors.js'
 import {
   ensureCleanWorkingTree,
+  fetchRemoteBranch,
   getCurrentBranch,
   getTrackedWorkingTreeStatus,
   git,
@@ -92,10 +93,7 @@ export async function createMrByMergeTarget(targetBranch: string, context: any) 
 
 async function refreshTargetBranch(targetBranch: string, context: any) {
   context.ui.step('检查', `刷新目标分支 origin/${targetBranch}。`)
-  await git(['fetch', 'origin', `+${targetBranch}:refs/remotes/origin/${targetBranch}`], context, {
-    label: `刷新 origin/${targetBranch}`,
-    mutates: true,
-  })
+  await fetchRemoteBranch(targetBranch, context)
 }
 
 async function prepareExistingMrBranch(mrBranch: string, targetBranch: string, currentBranch: string, context: any) {
@@ -105,10 +103,11 @@ async function prepareExistingMrBranch(mrBranch: string, targetBranch: string, c
 
   const { ui } = context
   ui.step('检查', '发现远程 MR 分支，拉取最新状态。')
-  await git(['fetch', 'origin', `+${mrBranch}:refs/remotes/origin/${mrBranch}`], context, {
-    label: `刷新 origin/${mrBranch}`,
-    mutates: true,
-  })
+  const fetched = await fetchRemoteBranch(mrBranch, context, { allowMissing: true })
+  if (!fetched) {
+    ui.status('warn', `远程 MR 分支 origin/${mrBranch} 已不存在，将按不存在处理。`)
+    return { done: false }
+  }
 
   const mrMergedTarget = await isAncestor(`origin/${mrBranch}`, `origin/${targetBranch}`, context)
   const mrContainsCurrent = await isAncestor(currentBranch, `origin/${mrBranch}`, context)

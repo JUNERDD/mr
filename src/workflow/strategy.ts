@@ -1,5 +1,5 @@
 import { CliError } from '../core/errors.js'
-import { type MrStrategy, normalizeMrStrategy, readMrSettings } from '../core/settings.js'
+import { type MrStrategy, normalizeMrStrategy, readDetachedSettings, readMrSettings } from '../core/settings.js'
 
 export async function resolveMrStrategy(context: any): Promise<MrStrategy> {
   const value = resolveFlagStrategy(context) ?? context.strategy
@@ -26,4 +26,12 @@ function resolveFlagStrategy(context: any) {
   }
 
   return strategies[0] ?? null
+}
+
+export async function resolveDetached(context: any): Promise<boolean> {
+  if (context.detached !== undefined) {
+    return Boolean(context.detached)
+  }
+
+  return (await readDetachedSettings(context)).effective
 }

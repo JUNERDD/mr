@@ -15,6 +15,16 @@ export type MrSettings = {
   source: MrStrategySource
 }
 
+export type DetachedSource = 'environment' | 'local' | 'global' | 'builtin'
+
+export type DetachedSettings = {
+  effective: boolean
+  global: boolean | null
+  local: boolean | null
+  localAvailable: boolean
+  source: DetachedSource
+}
+
 export const MR_STRATEGY_CHOICES: Array<{ description: string; label: string; value: MrStrategy }> = [
   {
     value: 'merge',
@@ -144,4 +154,86 @@ async function readLegacyRebaseStrategy(context: any): Promise<MrStrategy | null
 
 function scopeArg(scope: ConfigScope) {
   return scope === 'global' ? '--global' : '--local'
+}
+
+export function normalizeDetached(value: string): boolean {
+  const normalized = value.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+    return true
+  }
+
+  if (['0', 'false', 'no', 'off', ''].includes(normalized)) {
+    return false
+  }
+
+  throw new CliError(`不支持的 detached 配置: ${value}`, {
+    next: ['可选值: true / false', '运行 mr --config 进入交互式设置。'],
+  })
+}
+
+export async function readDetachedSettings(context: any): Promise<DetachedSettings> {
+  const envDetached = readEnvDetached(context)
+  const localAvailable = await isGitWorkTree(context)
+  const local = localAvailable ? await readScopeDetached('local', context) : null
+  const global = await readScopeDetached('global', context)
+
+  if (envDetached !== null) {
+    return { effective: envDetached, global, local, localAvailable, source: 'environment' }
+  }
+
+  if (local !== null) {
+    return { effective: local, global, local, localAvailable, source: 'local' }
+  }
+
+  if (global !== null) {
+    return { effective: global, global, local, localAvailable, source: 'global' }
+  }
+
+  return { effective: false, global, local, localAvailable, source: 'builtin' }
+}
+
+export async function writeDetachedConfig(value: boolean, scope: ConfigScope, context: any) {
+  await assertScopeWritable(scope, context)
+  await git(['config', scopeArg(scope), 'mr.detached', value ? 'true' : 'false'], context, {
+    label: `写入 ${scopeLabel(scope)} detached 配置`,
+    mutates: true,
+    quiet: true,
+  })
+}
+
+export async function unsetDetachedConfig(scope: ConfigScope, context: any) {
+  await assertScopeWritable(scope, context)
+  const current = await readScopeDetached(scope, context)
+  if (current === null) {
+    return false
+  }
+
+  await git(['config', scopeArg(scope), '--unset', 'mr.detached'], context, {
+    label: `清除 ${scopeLabel(scope)} detached 配置`,
+    mutates: true,
+    quiet: true,
+  })
+  return true
+}
+
+function readEnvDetached(context: any): boolean | null {
+  const value = context.env?.MR_DETACHED
+  if (value === undefined || value === null || !String(value).trim()) {
+    return null
+  }
+
+  return normalizeDetached(String(value))
+}
+
+async function readScopeDetached(scope: ConfigScope, context: any): Promise<boolean | null> {
+  const value = await gitOutput(['config', scopeArg(scope), '--bool', '--get', 'mr.detached'], context)
+  if (value === 'true') {
+    return true
+  }
+
+  if (value === 'false') {
+    return false
+  }
+
+  return null
 }

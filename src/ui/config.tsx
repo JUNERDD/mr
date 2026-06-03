@@ -1,23 +1,30 @@
 import { Box, Text, useInput } from 'ink'
 import { useMemo, useState } from 'react'
 import { CliError } from '../core/errors.js'
-import type { ConfigScope, MrSettings, MrStrategy } from '../core/settings.js'
+import type { ConfigScope, DetachedSettings, MrSettings, MrStrategy } from '../core/settings.js'
 import { MR_STRATEGY_CHOICES, scopeLabel } from '../core/settings.js'
 import type { createUi } from './terminal.js'
 
 export type ConfigSelection = {
+  detached: boolean
   scope: ConfigScope
   strategy: MrStrategy
 }
 
+const DETACHED_CHOICES = [
+  { value: false, label: '关闭', description: '默认切换本地 MR 分支（内联模式）' },
+  { value: true, label: '开启', description: '无感模式：不切本地分支，冲突时使用临时 worktree' },
+] as const
+
 type ConfigPickerProps = {
+  detachedSettings: DetachedSettings
   onCancel: () => void
   onSelect: (selection: ConfigSelection) => void
   settings: MrSettings
   ui: ReturnType<typeof createUi>
 }
 
-type Stage = 'scope' | 'strategy'
+type Stage = 'scope' | 'strategy' | 'detached'
 
 export function createConfigScopeChoices(localAvailable: boolean) {
   const choices: Array<{ description: string; label: string; value: ConfigScope }> = []
@@ -54,7 +61,7 @@ export function assertConfigInteractiveTerminal(
   }
 }
 
-export function ConfigPicker({ onCancel, onSelect, settings, ui }: ConfigPickerProps) {
+export function ConfigPicker({ detachedSettings, onCancel, onSelect, settings, ui }: ConfigPickerProps) {
   const scopes = useMemo(() => createConfigScopeChoices(settings.localAvailable), [settings.localAvailable])
   const strategies = useMemo(() => createStrategyChoices(), [])
   const [stage, setStage] = useState<Stage>('scope')
@@ -63,6 +70,12 @@ export function ConfigPicker({ onCancel, onSelect, settings, ui }: ConfigPickerP
     Math.max(
       0,
       strategies.findIndex((choice) => choice.value === settings.effective),
+    ),
+  )
+  const [detachedIndex, setDetachedIndex] = useState(() =>
+    Math.max(
+      0,
+      DETACHED_CHOICES.findIndex((choice) => choice.value === detachedSettings.effective),
     ),
   )
   const colorEnabled = ui.colors.isColorSupported
@@ -79,8 +92,13 @@ export function ConfigPicker({ onCancel, onSelect, settings, ui }: ConfigPickerP
       return
     }
 
-    const choices = stage === 'scope' ? scopes : strategies
-    const setIndex = stage === 'scope' ? setScopeIndex : setStrategyIndex
+    if (stage === 'detached' && (key.leftArrow || input === 'h' || input === 'b')) {
+      setStage('strategy')
+      return
+    }
+
+    const choices = stage === 'scope' ? scopes : stage === 'strategy' ? strategies : DETACHED_CHOICES
+    const setIndex = stage === 'scope' ? setScopeIndex : stage === 'strategy' ? setStrategyIndex : setDetachedIndex
 
     if (key.upArrow || input === 'k') {
       setIndex((index) => (index + choices.length - 1) % choices.length)
@@ -106,9 +124,15 @@ export function ConfigPicker({ onCancel, onSelect, settings, ui }: ConfigPickerP
         return
       }
 
+      if (stage === 'strategy') {
+        setStage('detached')
+        return
+      }
+
       onSelect({
         scope: scope.value,
         strategy: strategies[strategyIndex].value,
+        detached: DETACHED_CHOICES[detachedIndex].value,
       })
     }
   })
@@ -125,6 +149,10 @@ export function ConfigPicker({ onCancel, onSelect, settings, ui }: ConfigPickerP
         当前策略: <Text bold>{settings.effective}</Text>
         <Text dimColor={colorEnabled}> ({sourceText(settings.source)})</Text>
       </Text>
+      <Text>
+        无感模式: <Text bold>{detachedSettings.effective ? '开启' : '关闭'}</Text>
+        <Text dimColor={colorEnabled}> ({detachedSourceText(detachedSettings.source)})</Text>
+      </Text>
       <Text dimColor={colorEnabled}>
         当前仓库: {settings.local ?? (settings.localAvailable ? '未设置' : '不可用')} / 全局用户:{' '}
         {settings.global ?? '未设置'}
@@ -132,8 +160,11 @@ export function ConfigPicker({ onCancel, onSelect, settings, ui }: ConfigPickerP
       <Text> </Text>
       {stage === 'scope' ? renderScopeChoices(scopes, scopeIndex, colorEnabled) : null}
       {stage === 'strategy' ? renderStrategyChoices(strategies, strategyIndex, scope.label, colorEnabled) : null}
+      {stage === 'detached' ? renderDetachedChoices(detachedIndex, scope.label, colorEnabled) : null}
       <Text dimColor={colorEnabled}>上下 / 数字键 选择 回车 确认 q 取消</Text>
-      {stage === 'strategy' ? <Text dimColor={colorEnabled}>左方向键 / b 返回写入位置</Text> : null}
+      {stage === 'strategy' || stage === 'detached' ? (
+        <Text dimColor={colorEnabled}>左方向键 / b 返回上一步</Text>
+      ) : null}
     </Box>
   )
 }
@@ -184,6 +215,29 @@ function renderChoice(
       <Text dimColor={colorEnabled}> {description}</Text>
     </Text>
   )
+}
+
+function renderDetachedChoices(activeIndex: number, scope: string, colorEnabled: boolean) {
+  return (
+    <>
+      <Text bold>无感模式 ({scope})</Text>
+      {DETACHED_CHOICES.map((choice, index) =>
+        renderChoice(String(choice.value), choice.label, choice.description, index, activeIndex, colorEnabled),
+      )}
+    </>
+  )
+}
+
+function detachedSourceText(source: DetachedSettings['source']) {
+  if (source === 'environment') {
+    return 'MR_DETACHED 环境变量'
+  }
+
+  if (source === 'local' || source === 'global') {
+    return `${scopeLabel(source)} 配置`
+  }
+
+  return '内置默认'
 }
 
 function sourceText(source: MrSettings['source']) {

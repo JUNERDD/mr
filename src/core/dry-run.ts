@@ -1,6 +1,7 @@
+import { buildDetachedDryRunCommands } from './dry-run-detached.js'
 import type { MrStrategy } from './settings.js'
 
-type DryRunOptions = { deleteMrBranch?: boolean }
+type DryRunOptions = { deleteMrBranch?: boolean; detached?: boolean }
 
 export function mrBranchName(targetBranch: string, currentBranch: string) {
   return `mr/${targetBranch}/${currentBranch}`
@@ -21,6 +22,10 @@ export function buildDryRunCommands(
   options: DryRunOptions = {},
 ) {
   const mrBranch = mrBranchName(targetBranch, currentBranch)
+
+  if (options.detached) {
+    return buildDetachedDryRunCommands(targetBranch, currentBranch, mrBranch, strategy, options)
+  }
 
   if (strategy === 'rebase') {
     return buildRebaseDryRunCommands(targetBranch, currentBranch, mrBranch, options)
@@ -222,23 +227,39 @@ function buildMergeTargetDryRunCommands(
   ]
 }
 
-export function printDryRun(targetBranch: string, currentBranch: string, context: any, strategy: MrStrategy = 'merge') {
+export function printDryRun(
+  targetBranch: string,
+  currentBranch: string,
+  context: any,
+  strategy: MrStrategy = 'merge',
+  options: DryRunOptions = {},
+) {
   const { ui } = context
   const mrBranch = mrBranchName(targetBranch, currentBranch)
+  const detached = options.detached ?? Boolean(context.detached)
 
   // dry-run 与正式执行用同样的品牌面板节奏:标题 + 三字段 + 一空行 + dim 免责声明,
   // 然后逐条列出计划命令(? 符号),提示语用 . 标记结束。
-  ui.panel('mr  预览', [
-    `目标分支  ${targetBranch}`,
-    `当前分支  ${currentBranch}`,
-    `MR 分支   ${mrBranch}`,
-    '',
-    ui.colors.dim('不会修改本地分支、远程分支或创建合并请求。'),
-  ])
+  ui.panel(
+    detached ? 'mr  无感预览' : 'mr  预览',
+    [
+      `目标分支  ${targetBranch}`,
+      `当前分支  ${currentBranch}`,
+      `MR 分支   ${mrBranch}`,
+      detached ? `模式      detached` : null,
+      '',
+      ui.colors.dim(
+        detached
+          ? '不会切换本地分支；不要求工作区干净；冲突时可能使用临时 worktree。'
+          : '不会修改本地分支、远程分支或创建合并请求。',
+      ),
+    ].filter((line): line is string => line !== null),
+  )
 
-  ui.status('info', `整合策略: ${strategy}`)
+  ui.status('info', `整合策略: ${strategy}${detached ? ' (detached)' : ''}`)
   for (const command of buildDryRunCommands(targetBranch, currentBranch, strategy, {
     deleteMrBranch: context.deleteMrBranch && strategy !== 'pr',
+    detached,
   })) {
     ui.status('plan', command.label)
     ui.command(command.command, command.args)

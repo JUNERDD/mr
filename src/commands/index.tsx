@@ -2,6 +2,7 @@ import { useApp } from 'ink'
 import { argument, option } from 'pastel'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import zod from 'zod'
+import { colorOptionFromArgv, resolveDetachedFromOptions, resolveMaintenanceOptions } from './maintenance-options.js'
 import { invokedNameFromArgv } from '../cli/invocation.js'
 import { getCurrentArgv } from '../cli/runtime-state.js'
 import { createContext } from '../core/context.js'
@@ -79,6 +80,10 @@ export const options = zod.object({
   merge: zod.boolean().describe(describedFlag('临时覆盖为 merge 策略；未指定策略时读取 mr --config', '按配置')),
   rebase: zod.boolean().describe(describedFlag('临时覆盖为 rebase 策略', '未指定')),
   mergeTarget: zod.boolean().describe(describedFlag('临时覆盖为 merge-target 策略', '未指定')),
+  detached: zod
+    .boolean()
+    .describe(describedFlag('无感模式：不切本地分支，用 plumbing 或临时 worktree 准备 MR', '未指定')),
+  noDetached: zod.boolean().optional().describe(describedFlag('临时关闭无感模式', '未指定')),
   rmMr: zod.boolean().describe(describedFlag('执行 MR 分支策略前先删除对应远程 MR 分支')),
 })
 
@@ -90,94 +95,12 @@ type Props = {
   options: CommandOptions
 }
 
-type MaintenanceCommand = 'config' | 'uninstall' | 'update'
-
-function colorOptionFromArgv(argv: string[]) {
-  if (argv.includes('--color')) {
-    return true
-  }
-
-  if (argv.includes('--no-color')) {
-    return false
-  }
-
-  return undefined
-}
-
 function toCliError(error: any) {
   if (error instanceof CliError) {
     return error
   }
 
   return new CliError(error?.message ?? '未知错误。', { details: compactOutput(error?.stack) })
-}
-
-function resolveMaintenanceOptions(options: CommandOptions, targetArg?: string) {
-  const commands: MaintenanceCommand[] = []
-  if (options.config) {
-    commands.push('config')
-  }
-  if (options.update) {
-    commands.push('update')
-  }
-  if (options.uninstall) {
-    commands.push('uninstall')
-  }
-
-  if (commands.length > 1) {
-    return {
-      command: undefined,
-      error: new CliError('只能指定一个维护选项。', {
-        next: ['可选项: --config, --update, --uninstall'],
-      }),
-    }
-  }
-
-  const configOnlyOptions = [
-    options.global ? '--global' : null,
-    options.local ? '--local' : null,
-    options.show ? '--show' : null,
-    options.strategy ? '--strategy' : null,
-    options.unset ? '--unset' : null,
-  ].filter(Boolean)
-
-  if (!options.config && configOnlyOptions.length) {
-    return {
-      command: undefined,
-      error: new CliError(`${configOnlyOptions.join(', ')} 需要和 --config 一起使用。`, {
-        next: ['例如: mr --config --strategy rebase'],
-      }),
-    }
-  }
-
-  const mrWorkflowOptions = [
-    options.dryRun ? '--dry-run' : null,
-    options.pr ? '--pr' : null,
-    options.merge ? '--merge' : null,
-    options.rebase ? '--rebase' : null,
-    options.mergeTarget ? '--merge-target' : null,
-    options.rmMr ? '--rm-mr' : null,
-  ].filter(Boolean)
-
-  if (commands.length && mrWorkflowOptions.length) {
-    return {
-      command: undefined,
-      error: new CliError(`维护选项不能和 MR 工作流选项 ${mrWorkflowOptions.join(', ')} 同时使用。`, {
-        next: ['维护操作使用 --config / --update / --uninstall；创建合并请求时再使用 --dry-run / --rebase 等选项。'],
-      }),
-    }
-  }
-
-  if (commands.length && targetArg) {
-    return {
-      command: undefined,
-      error: new CliError('维护选项不能和目标分支同时使用。', {
-        next: ['例如: mr --config，或 mr release/2026-05'],
-      }),
-    }
-  }
-
-  return { command: commands[0], error: null }
 }
 
 export default function Index({ args: commandArgs, options: commandOptions }: Props) {
@@ -192,6 +115,7 @@ export default function Index({ args: commandArgs, options: commandOptions }: Pr
     () =>
       createContext({
         color: colorOptionFromArgv(argv),
+        detached: resolveDetachedFromOptions(argv, commandOptions),
         deleteMrBranch: commandOptions.rmMr,
         dryRun: commandOptions.dryRun,
         merge: commandOptions.merge,

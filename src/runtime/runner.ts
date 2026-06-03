@@ -58,7 +58,7 @@ export async function run(
     }
   }
 
-  const result = await execute(command, args, spinner, ui, commandLabel)
+  const result = await execute(command, args, spinner, ui, commandLabel, context)
   const succeeded = result.exitCode === 0
   persistResult(spinner, ui, quiet, succeeded, commandLabel)
   maybePrintOutput(result, ui, quiet, verbose, showOutput, succeeded)
@@ -80,9 +80,11 @@ async function execute(
   spinner: any,
   ui: ReturnType<typeof createUi>,
   commandLabel: string,
+  context?: any,
 ) {
   try {
-    return await execa(command, args, { all: true, reject: false })
+    const cwd = context?.cwd
+    return await execa(command, args, { all: true, reject: false, ...(cwd ? { cwd } : {}) })
   } catch (error: any) {
     if (spinner) {
       spinner.stopAndPersist({

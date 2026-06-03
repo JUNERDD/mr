@@ -23,7 +23,8 @@ import { createMrByMergeTarget } from './merge-target-mr.js'
 import { createPrFromCurrentBranch } from './pr-mr.js'
 import { getActiveMrRebase, resumeActiveMrRebase } from './rebase-resume.js'
 import { restoreInitialBranch, withRecoveryDetails } from './recovery.js'
-import { resolveMrStrategy } from './strategy.js'
+import { createMrDetached } from './detached.js'
+import { resolveDetached, resolveMrStrategy } from './strategy.js'
 
 class RebaseConflictError extends CliError {}
 
@@ -44,6 +45,9 @@ async function createPullRequest(
 
 export async function createMrFromTargetBranch(targetBranch: string, context: any) {
   await ensureGitContext(context)
+
+  if (await resolveDetached(context)) return createMrDetached(targetBranch, context)
+
   const activeRebase = await getActiveMrRebase(targetBranch, context)
   if (activeRebase && !context.dryRun) {
     await resumeActiveMrRebase(activeRebase, targetBranch, context, pushAndEnsureRequest)

@@ -2,7 +2,9 @@ import { createUi } from '../ui/terminal.js'
 
 type ContextOptions = {
   color?: boolean
+  cwd?: string
   deleteMrBranch?: boolean
+  detached?: boolean
   dryRun?: boolean
   env?: NodeJS.ProcessEnv
   merge?: boolean
@@ -33,7 +35,9 @@ export function createContext(options: ContextOptions = {}) {
     })
 
   return {
+    cwd: options.cwd,
     deleteMrBranch: Boolean(options.deleteMrBranch),
+    detached: options.detached,
     dryRun: Boolean(options.dryRun),
     env: options.env ?? process.env,
     merge: Boolean(options.merge),

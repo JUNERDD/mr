@@ -22,6 +22,8 @@ mr --config # 交互式设置默认 MR 策略
 mr test --dry-run       # 只看计划，不修改本地或远程状态
 mr test --rm-mr         # 先删除对应远程 MR 分支，再按所选策略重建
 mr test --pr            # 直接用当前分支创建到 test 的 PR，不创建 mr/* 分支
+mr test --detached      # 无感模式：不切本地分支，不要求工作区干净
+mr test --no-detached   # 临时关闭无感模式
 mr test --verbose       # 输出实际执行的 git 命令和完整输出
 mr test --quiet         # 只输出错误
 mr test --no-color      # 禁用颜色，适合日志和无障碍场景
@@ -108,8 +110,10 @@ curl -fsSL https://raw.githubusercontent.com/JUNERDD/mr/main/install.sh | bash
 - `--rebase`：从当前分支准备 MR 分支，再 rebase 到目标分支。
 - `--merge-target`：从当前分支准备 MR 分支，再把目标分支 merge 进去。
 - `--pr` 和三种 MR 分支策略都适用于 `mr` 交互式选择、`mrm`、`mrt`、`mrp` 和 `mr <target>`；也可通过 `mr --config`、`git config mr.strategy pr|merge|rebase|merge-target` 或 `MR_STRATEGY=...` 设置默认策略。
-- 其他中途失败：自动尝试回到初始分支。
-- 默认要求 tracked 工作区干净，避免切换分支时带入未提交改动。
+- `--detached`：无感模式，正交于策略。happy path 用 `merge-tree` / `commit-tree` 推送 `mr/*` 分支，不切换本地分支、不要求 tracked 工作区干净；`--rebase` 或发生冲突时回退到临时 `git worktree`，在 worktree 内解决冲突后回到主仓库重跑 `mr <target> --detached` 自动 resume 并清理 worktree。
+- `--pr` 在 detached 下本就无需切分支，行为与 `--pr` 一致。
+- 其他中途失败：自动尝试回到初始分支（内联模式）。
+- 默认（非 detached）要求 tracked 工作区干净，避免切换分支时带入未提交改动。
 - 进度、诊断和错误写到 stderr，命令输出不会污染管道中的 stdout。
 
 ## 配置
@@ -124,6 +128,14 @@ curl -fsSL https://raw.githubusercontent.com/JUNERDD/mr/main/install.sh | bash
 4. 全局用户 `git config --global mr.strategy ...`
 5. 内置默认 `merge`
 
+无感模式（detached）优先级从高到低：
+
+1. `--detached` / `--no-detached`
+2. `MR_DETACHED=true|false|1|0`
+3. 当前仓库 `git config mr.detached true|false`
+4. 全局用户 `git config --global mr.detached true|false`
+5. 内置默认 `false`
+
 交互式设置：
 
 ```sh
@@ -137,6 +149,9 @@ mr --config --show
 mr --config --strategy rebase
 mr --config --global --strategy pr
 mr --config --unset
+mr --config --detached
+mr --config --no-detached
+mr --config --global --detached
 ```
 
 ## 分支逻辑图
@@ -211,6 +226,21 @@ flowchart TD
 
   Y["停在 M 的冲突状态<br/>手动解决冲突并 git add"]
   Y --> Z["重新执行同一个 mr* 命令<br/>自动继续 commit 或 rebase"]
+```
+
+无感模式（`--detached`）在策略解析后走独立路径，不切本地分支：
+
+```mermaid
+flowchart TD
+  D0["--detached"] --> D1{"遗留冲突 worktree?"}
+  D1 -- "是" --> D2["worktree 内 resume<br/>push + PR + 删除 worktree"]
+  D1 -- "否" --> D3{"策略"}
+  D3 -- "pr" --> D4["push B + 建 PR"]
+  D3 -- "rebase" --> D5["临时 worktree 变基"]
+  D3 -- "merge / merge-target" --> D6["merge-tree 内存合并"]
+  D6 --> D7{"冲突?"}
+  D7 -- "否" --> D8["commit-tree + push OID + PR"]
+  D7 -- "是" --> D9["临时 worktree 真实 merge<br/>解决后重跑 --detached"]
 ```
 
 ## UI / DX

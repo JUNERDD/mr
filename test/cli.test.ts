@@ -9,13 +9,21 @@ import { test } from 'vitest'
 import { buildDryRunCommands } from '../src/core/dry-run.js'
 import { CliError } from '../src/core/errors.js'
 import { formatCommand } from '../src/core/format.js'
+import { resolveMaintenanceOptions } from '../src/commands/maintenance-options.js'
 import { isInteractiveInvocation, normalizeHelpArgv, resolveTargetFromInvocation } from '../src/core/targets.js'
-import { readMrSettings, unsetStrategyConfig, writeStrategyConfig } from '../src/core/settings.js'
+import {
+  readDetachedSettings,
+  readMrSettings,
+  unsetDetachedConfig,
+  unsetStrategyConfig,
+  writeDetachedConfig,
+  writeStrategyConfig,
+} from '../src/core/settings.js'
 import { assertConfigInteractiveTerminal, createConfigScopeChoices, createStrategyChoices } from '../src/ui/config.js'
 import { createSelectConfig, selectTarget } from '../src/ui/select-target.js'
 import { createUi, resolveColorEnabled } from '../src/ui/terminal.js'
 import { withRecoveryDetails } from '../src/workflow/recovery.js'
-import { resolveMrStrategy } from '../src/workflow/strategy.js'
+import { resolveDetached, resolveMrStrategy } from '../src/workflow/strategy.js'
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 const execFileAsync = promisify(execFile)
@@ -282,8 +290,90 @@ test('writeStrategyConfig and unsetStrategyConfig update git config scopes', asy
   }
 })
 
+test('resolveDetached accepts flags and environment configuration', async () => {
+  assert.equal(await resolveDetached({ detached: true }), true)
+  assert.equal(await resolveDetached({ detached: false }), false)
+  assert.equal(await resolveDetached({ env: { MR_DETACHED: 'true' } }), true)
+  assert.equal(await resolveDetached({ env: { MR_DETACHED: '0' } }), false)
+})
+
+test('readDetachedSettings reports effective detached by precedence', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mr-detached-settings-'))
+  const repo = join(root, 'repo')
+  const globalConfig = join(root, 'global.gitconfig')
+  const originalCwd = process.cwd()
+  const originalGlobalConfig = process.env.GIT_CONFIG_GLOBAL
+
+  try {
+    await execFileAsync('git', ['init', repo])
+    process.env.GIT_CONFIG_GLOBAL = globalConfig
+    await execFileAsync('git', ['config', '--global', 'mr.detached', 'false'])
+    await execFileAsync('git', ['config', 'mr.detached', 'true'], { cwd: repo })
+    process.chdir(repo)
+
+    const settings = await readDetachedSettings({ env: {}, ui: createUi({ quiet: true }) })
+    assert.equal(settings.effective, true)
+    assert.equal(settings.source, 'local')
+
+    const envSettings = await readDetachedSettings({ env: { MR_DETACHED: 'false' }, ui: createUi({ quiet: true }) })
+    assert.equal(envSettings.effective, false)
+    assert.equal(envSettings.source, 'environment')
+  } finally {
+    process.chdir(originalCwd)
+    if (originalGlobalConfig === undefined) {
+      delete process.env.GIT_CONFIG_GLOBAL
+    } else {
+      process.env.GIT_CONFIG_GLOBAL = originalGlobalConfig
+    }
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('writeDetachedConfig and unsetDetachedConfig update git config scopes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mr-detached-write-'))
+  const originalCwd = process.cwd()
+
+  try {
+    await execFileAsync('git', ['init'], { cwd: root })
+    process.chdir(root)
+
+    const context = { env: {}, ui: createUi({ quiet: true }) }
+    await writeDetachedConfig(true, 'local', context)
+    assert.equal(
+      (await execFileAsync('git', ['config', '--bool', '--local', '--get', 'mr.detached'])).stdout.trim(),
+      'true',
+    )
+
+    assert.equal(await unsetDetachedConfig('local', context), true)
+    assert.equal(await unsetDetachedConfig('local', context), false)
+  } finally {
+    process.chdir(originalCwd)
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('buildDryRunCommands supports detached merge plumbing', () => {
+  const commands = buildDryRunCommands('test', 'feature/demo', 'merge', { detached: true })
+  assert.ok(commands.some((command) => command.label.includes('内存合并')))
+  assert.ok(commands.some((command) => command.args[0] === 'merge-tree'))
+})
+
 test('resolveMrStrategy rejects conflicting strategy flags', async () => {
   await assert.rejects(resolveMrStrategy({ pr: true, rebase: true }), /只能指定一个 MR 策略选项/)
+})
+
+test('--detached works as a workflow modifier and a --config setter', () => {
+  assert.deepEqual(resolveMaintenanceOptions({ detached: true }, 'master'), { command: undefined, error: null })
+  assert.deepEqual(resolveMaintenanceOptions({ noDetached: true }, 'master'), { command: undefined, error: null })
+
+  const configDetached = resolveMaintenanceOptions({ config: true, detached: true })
+  assert.equal(configDetached.command, 'config')
+  assert.equal(configDetached.error, null)
+})
+
+test('--detached still cannot mix with conflicting maintenance or strategy flags', () => {
+  assert.equal(resolveMaintenanceOptions({ config: true, merge: true }).error?.constructor, CliError)
+  assert.equal(resolveMaintenanceOptions({ strategy: 'rebase' }).error?.constructor, CliError)
 })
 
 test('withRecoveryDetails preserves the original error and records branch recovery', () => {

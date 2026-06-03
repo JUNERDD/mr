@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,7 +19,19 @@ import {
   writeDetachedConfig,
   writeStrategyConfig,
 } from '../src/core/settings.js'
-import { assertConfigInteractiveTerminal, createConfigScopeChoices, createStrategyChoices } from '../src/ui/config.js'
+import {
+  readRequestCommandSettings,
+  unsetRequestCommandOnlyConfig,
+  unsetRequestProviderConfig,
+  writeRequestCommandConfig,
+  writeRequestProviderConfig,
+} from '../src/core/request-command.js'
+import {
+  assertConfigInteractiveTerminal,
+  createConfigScopeChoices,
+  createProviderChoices,
+  createStrategyChoices,
+} from '../src/ui/config.js'
 import { createSelectConfig, selectTarget } from '../src/ui/select-target.js'
 import { createUi, resolveColorEnabled } from '../src/ui/terminal.js'
 import { withRecoveryDetails } from '../src/workflow/recovery.js'
@@ -124,6 +136,13 @@ test('createStrategyChoices exposes all MR strategies', () => {
   )
 })
 
+test('createProviderChoices exposes request provider presets', () => {
+  assert.deepEqual(
+    createProviderChoices().map((choice) => choice.value),
+    ['auto', 'none', 'cnb', 'github', 'gitlab'],
+  )
+})
+
 test('formatCommand keeps shell-like output readable', () => {
   assert.equal(
     formatCommand('git', ['push', 'origin', 'HEAD:mr/master/feature/a']),
@@ -154,9 +173,19 @@ test('buildDryRunCommands includes the core MR workflow', () => {
     'git branch --set-upstream-to origin/mr/test/feature/demo mr/test/feature/demo',
     'git merge --no-edit feature/demo',
     'git push origin HEAD:mr/test/feature/demo',
-    'git cnb pull create -H mr/test/feature/demo -B test',
     'git switch feature/demo',
   ])
+})
+
+test('buildDryRunCommands includes an optional request command when configured', () => {
+  const commands = buildDryRunCommands('test', 'feature/demo', 'merge', {
+    requestCommand: 'gh pr create --fill --head "$MR_SOURCE_BRANCH" --base "$MR_TARGET_BRANCH"',
+  })
+  const rendered = commands.map(({ command, args }) => formatCommand(command, args))
+
+  assert.ok(
+    rendered.includes('sh -c "gh pr create --fill --head \\"$MR_SOURCE_BRANCH\\" --base \\"$MR_TARGET_BRANCH\\""'),
+  )
 })
 
 test('buildDryRunCommands includes MR branch deletion when requested', () => {
@@ -181,7 +210,6 @@ test('buildDryRunCommands supports the rebase strategy', () => {
     'git merge-base origin/test feature/demo',
     'git rebase --onto origin/test MERGE_BASE mr/test/feature/demo',
     'git push --force-with-lease --set-upstream origin HEAD:mr/test/feature/demo',
-    'git cnb pull create -H mr/test/feature/demo -B test',
     'git switch feature/demo',
   ])
 })
@@ -196,19 +224,17 @@ test('buildDryRunCommands supports the merge-target strategy', () => {
     'git switch -C mr/test/feature/demo feature/demo',
     'git merge --no-edit origin/test',
     'git push --force-with-lease --set-upstream origin HEAD:mr/test/feature/demo',
-    'git cnb pull create -H mr/test/feature/demo -B test',
     'git switch feature/demo',
   ])
 })
 
-test('buildDryRunCommands supports direct PR creation from the current branch', () => {
+test('buildDryRunCommands supports direct push from the current branch', () => {
   const commands = buildDryRunCommands('test', 'feature/demo', 'pr')
   const rendered = commands.map(({ command, args }) => formatCommand(command, args))
 
   assert.deepEqual(rendered, [
     'git fetch origin +refs/heads/test:refs/remotes/origin/test',
     'git push --set-upstream origin HEAD:feature/demo',
-    'git cnb pull create -H feature/demo -B test',
   ])
 })
 
@@ -307,6 +333,12 @@ test('readDetachedSettings reports effective detached by precedence', async () =
   try {
     await execFileAsync('git', ['init', repo])
     process.env.GIT_CONFIG_GLOBAL = globalConfig
+    process.chdir(root)
+
+    const builtinSettings = await readDetachedSettings({ env: {}, ui: createUi({ quiet: true }) })
+    assert.equal(builtinSettings.effective, true)
+    assert.equal(builtinSettings.source, 'builtin')
+
     await execFileAsync('git', ['config', '--global', 'mr.detached', 'false'])
     await execFileAsync('git', ['config', 'mr.detached', 'true'], { cwd: repo })
     process.chdir(repo)
@@ -324,6 +356,168 @@ test('readDetachedSettings reports effective detached by precedence', async () =
       delete process.env.GIT_CONFIG_GLOBAL
     } else {
       process.env.GIT_CONFIG_GLOBAL = originalGlobalConfig
+    }
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('readRequestCommandSettings reports optional request command by precedence', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mr-request-command-settings-'))
+  const repo = join(root, 'repo')
+  const globalConfig = join(root, 'global.gitconfig')
+  const originalCwd = process.cwd()
+  const originalGlobalConfig = process.env.GIT_CONFIG_GLOBAL
+
+  try {
+    await execFileAsync('git', ['init', repo])
+    process.env.GIT_CONFIG_GLOBAL = globalConfig
+    await execFileAsync('git', ['config', '--global', 'mr.requestCommand', 'global-command'])
+    await execFileAsync('git', ['config', 'mr.requestCommand', 'local-command'], { cwd: repo })
+    process.chdir(repo)
+
+    const settings = await readRequestCommandSettings({ env: {}, ui: createUi({ quiet: true }) })
+    assert.equal(settings.effective, 'local-command')
+    assert.equal(settings.source, 'local')
+    assert.equal(settings.global, 'global-command')
+    assert.equal(settings.local, 'local-command')
+
+    const envSettings = await readRequestCommandSettings({
+      env: { MR_REQUEST_COMMAND: 'env-command' },
+      ui: createUi({ quiet: true }),
+    })
+    assert.equal(envSettings.effective, 'env-command')
+    assert.equal(envSettings.source, 'environment')
+
+    assert.equal(await unsetRequestCommandOnlyConfig('local', { env: {}, ui: createUi({ quiet: true }) }), true)
+    assert.equal(await unsetRequestCommandOnlyConfig('local', { env: {}, ui: createUi({ quiet: true }) }), false)
+  } finally {
+    process.chdir(originalCwd)
+    if (originalGlobalConfig === undefined) {
+      delete process.env.GIT_CONFIG_GLOBAL
+    } else {
+      process.env.GIT_CONFIG_GLOBAL = originalGlobalConfig
+    }
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('readRequestCommandSettings lets custom request commands outrank invalid providers', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mr-request-command-invalid-provider-'))
+  const repo = join(root, 'repo')
+  const originalCwd = process.cwd()
+
+  try {
+    await execFileAsync('git', ['init', repo])
+    await execFileAsync('git', ['config', 'mr.requestCommand', 'local-command'], { cwd: repo })
+    await execFileAsync('git', ['config', 'mr.requestProvider', 'not-a-provider'], { cwd: repo })
+    process.chdir(repo)
+
+    const localSettings = await readRequestCommandSettings({ env: {}, ui: createUi({ quiet: true }) })
+    assert.equal(localSettings.effective, 'local-command')
+    assert.equal(localSettings.source, 'local')
+
+    const envSettings = await readRequestCommandSettings({
+      env: {
+        MR_REQUEST_COMMAND: 'env-command',
+        MR_REQUEST_PROVIDER: 'not-a-provider',
+      },
+      ui: createUi({ quiet: true }),
+    })
+    assert.equal(envSettings.effective, 'env-command')
+    assert.equal(envSettings.source, 'environment')
+  } finally {
+    process.chdir(originalCwd)
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('request command and provider configs can be unset independently', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mr-request-config-write-'))
+  const originalCwd = process.cwd()
+
+  try {
+    await execFileAsync('git', ['init', root])
+    process.chdir(root)
+
+    const context = { env: {}, ui: createUi({ quiet: true }) }
+    await writeRequestCommandConfig('custom-command', 'local', context)
+    await writeRequestProviderConfig('github', 'local', context)
+
+    let settings = await readRequestCommandSettings(context)
+    assert.equal(settings.effective, 'custom-command')
+    assert.equal(settings.providerLocal, 'github')
+
+    assert.equal(await unsetRequestCommandOnlyConfig('local', context), true)
+    settings = await readRequestCommandSettings(context)
+    assert.equal(settings.local, null)
+    assert.equal(settings.providerLocal, 'github')
+
+    assert.equal(await unsetRequestProviderConfig('local', context), true)
+    settings = await readRequestCommandSettings(context)
+    assert.equal(settings.providerLocal, null)
+  } finally {
+    process.chdir(originalCwd)
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('readRequestCommandSettings supports provider presets and auto-detects repository hosts', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mr-request-command-auto-'))
+  const repo = join(root, 'repo')
+  const bin = join(root, 'bin')
+  const originalCwd = process.cwd()
+  const originalPath = process.env.PATH
+
+  try {
+    await mkdir(bin)
+    await writeFile(join(bin, 'git-cnb'), ['#!/bin/sh', 'if [ "$1" = "-h" ]; then exit 0; fi', 'exit 1', ''].join('\n'))
+    await writeFile(
+      join(bin, 'gh'),
+      ['#!/bin/sh', 'if [ "$1" = "--version" ]; then exit 0; fi', 'exit 1', ''].join('\n'),
+    )
+    await writeFile(
+      join(bin, 'glab'),
+      ['#!/bin/sh', 'if [ "$1" = "--version" ]; then exit 0; fi', 'exit 1', ''].join('\n'),
+    )
+    await chmod(join(bin, 'git-cnb'), 0o755)
+    await chmod(join(bin, 'gh'), 0o755)
+    await chmod(join(bin, 'glab'), 0o755)
+    await execFileAsync('git', ['init', repo])
+    process.chdir(repo)
+    process.env.PATH = `${bin}:${originalPath ?? ''}`
+
+    await execFileAsync('git', ['remote', 'add', 'origin', 'https://github.com/example/repo.git'])
+    const github = await readRequestCommandSettings({ env: {}, ui: createUi({ quiet: true }) })
+    assert.equal(github.effective, 'gh pr create --fill --head "$MR_SOURCE_BRANCH" --base "$MR_TARGET_BRANCH"')
+    assert.equal(github.provider, 'github')
+    assert.equal(github.source, 'auto')
+
+    await writeRequestProviderConfig('none', 'local', { env: {}, ui: createUi({ quiet: true }) })
+    const disabled = await readRequestCommandSettings({ env: {}, ui: createUi({ quiet: true }) })
+    assert.equal(disabled.effective, null)
+    assert.equal(disabled.provider, 'none')
+    await unsetRequestProviderConfig('local', { env: {}, ui: createUi({ quiet: true }) })
+
+    await execFileAsync('git', ['remote', 'set-url', 'origin', 'https://gitlab.com/example/repo.git'])
+    const gitlab = await readRequestCommandSettings({ env: {}, ui: createUi({ quiet: true }) })
+    assert.equal(
+      gitlab.effective,
+      'glab mr create --fill --source-branch "$MR_SOURCE_BRANCH" --target-branch "$MR_TARGET_BRANCH"',
+    )
+    assert.equal(gitlab.provider, 'gitlab')
+    assert.equal(gitlab.source, 'auto')
+
+    await execFileAsync('git', ['remote', 'set-url', 'origin', 'https://cnb.cool/example/repo.git'])
+    const cnb = await readRequestCommandSettings({ env: {}, ui: createUi({ quiet: true }) })
+    assert.equal(cnb.effective, 'git cnb pull create -H "$MR_SOURCE_BRANCH" -B "$MR_TARGET_BRANCH"')
+    assert.equal(cnb.provider, 'cnb')
+    assert.equal(cnb.source, 'auto')
+  } finally {
+    process.chdir(originalCwd)
+    if (originalPath === undefined) {
+      delete process.env.PATH
+    } else {
+      process.env.PATH = originalPath
     }
     await rm(root, { recursive: true, force: true })
   }
@@ -374,6 +568,9 @@ test('--detached works as a workflow modifier and a --config setter', () => {
 test('--detached still cannot mix with conflicting maintenance or strategy flags', () => {
   assert.equal(resolveMaintenanceOptions({ config: true, merge: true }).error?.constructor, CliError)
   assert.equal(resolveMaintenanceOptions({ strategy: 'rebase' }).error?.constructor, CliError)
+  assert.equal(resolveMaintenanceOptions({ requestCommand: 'cmd' }).error?.constructor, CliError)
+  assert.equal(resolveMaintenanceOptions({ unsetRequestCommand: true }).error?.constructor, CliError)
+  assert.equal(resolveMaintenanceOptions({ unsetRequestProvider: true }).error?.constructor, CliError)
 })
 
 test('withRecoveryDetails preserves the original error and records branch recovery', () => {

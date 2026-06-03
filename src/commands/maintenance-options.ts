@@ -13,11 +13,15 @@ export type CommandOptionsLike = {
   noDetached?: boolean
   pr?: boolean
   rebase?: boolean
+  requestCommand?: unknown
+  requestProvider?: unknown
   rmMr?: boolean
   show?: boolean
   strategy?: unknown
   uninstall?: boolean
   unset?: boolean
+  unsetRequestCommand?: boolean
+  unsetRequestProvider?: boolean
   update?: boolean
 }
 
@@ -90,7 +94,11 @@ export function resolveMaintenanceOptions(options: CommandOptionsLike, targetArg
     options.local ? '--local' : null,
     options.show ? '--show' : null,
     options.strategy ? '--strategy' : null,
+    options.requestCommand ? '--request-command' : null,
+    options.requestProvider ? '--request-provider' : null,
     options.unset ? '--unset' : null,
+    options.unsetRequestCommand ? '--unset-request-command' : null,
+    options.unsetRequestProvider ? '--unset-request-provider' : null,
   ].filter(Boolean)
 
   if (!options.config && configOnlyOptions.length) {

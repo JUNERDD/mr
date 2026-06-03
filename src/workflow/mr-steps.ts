@@ -1,4 +1,5 @@
 import { CliError, compactOutput } from '../core/errors.js'
+import { readRequestCommandSettings } from '../core/request-command.js'
 import { fetchRemoteBranch, getMergeBase, git } from '../git/client.js'
 import { rewriteRebaseConflictMarkers } from '../git/conflicts.js'
 import { run } from '../runtime/runner.js'
@@ -7,19 +8,51 @@ export class MergeConflictError extends CliError {}
 export class RebaseConflictError extends CliError {}
 export class MergeTargetConflictError extends CliError {}
 
+export type PullRequestResult = {
+  all: string
+  exitCode: number
+  skipped?: boolean
+  stderr: string
+  stdout: string
+}
+
 export async function createPullRequest(
   mrBranch: string,
   targetBranch: string,
   context: any,
-  { allowFailure = false, labelPrefix = '创建合并请求' } = {},
-) {
-  return run('git', ['cnb', 'pull', 'create', '-H', mrBranch, '-B', targetBranch], {
+  { allowFailure = false, labelPrefix = '处理合并请求', promptWhenMissing = true } = {},
+): Promise<PullRequestResult> {
+  const requestCommand = (await readRequestCommandSettings(context)).effective
+  if (!requestCommand) {
+    if (promptWhenMissing) {
+      context.ui.status('info', `已推送 ${mrBranch}，请在 Git 平台创建合并请求到 ${targetBranch}。`)
+    }
+    return { exitCode: 0, stdout: '', stderr: '', all: '', skipped: true }
+  }
+
+  return run('sh', ['-c', requestCommand], {
     label: `${labelPrefix} ${mrBranch} -> ${targetBranch}`,
     allowFailure,
+    env: requestCommandEnv(mrBranch, targetBranch),
     showOutput: true,
     mutates: true,
     context,
   })
+}
+
+export function requestCompletionLines(sourceBranch: string, targetBranch: string, result?: { skipped?: boolean }) {
+  return result?.skipped
+    ? [`请求源已就绪 ${sourceBranch}`, `手动创建  ${sourceBranch} -> ${targetBranch}`]
+    : [`合并请求  ${sourceBranch} -> ${targetBranch}`]
+}
+
+function requestCommandEnv(sourceBranch: string, targetBranch: string) {
+  return {
+    MR_BASE_BRANCH: targetBranch,
+    MR_HEAD_BRANCH: sourceBranch,
+    MR_SOURCE_BRANCH: sourceBranch,
+    MR_TARGET_BRANCH: targetBranch,
+  }
 }
 
 export async function refreshTargetBranch(targetBranch: string, context: any) {
@@ -63,7 +96,7 @@ export async function mergeCurrentBranchIntoMr(
     `然后重新运行: mr ${targetBranch}`,
   ]
   if (!requestCreated) {
-    next.push(`或手动创建合并请求: git cnb pull create -H ${mrBranch} -B ${targetBranch}`)
+    next.push(`或推送后在 Git 平台手动创建合并请求: ${mrBranch} -> ${targetBranch}`)
   }
 
   throw new MergeConflictError(`合并 ${currentBranch} 到 ${mrBranch} 时发生冲突。`, {

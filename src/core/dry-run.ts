@@ -1,7 +1,8 @@
 import { buildDetachedDryRunCommands } from './dry-run-detached.js'
+import { readRequestCommandSettings } from './request-command.js'
 import type { MrStrategy } from './settings.js'
 
-type DryRunOptions = { deleteMrBranch?: boolean; detached?: boolean }
+type DryRunOptions = { deleteMrBranch?: boolean; detached?: boolean; requestCommand?: string | null }
 
 export function mrBranchName(targetBranch: string, currentBranch: string) {
   return `mr/${targetBranch}/${currentBranch}`
@@ -32,7 +33,7 @@ export function buildDryRunCommands(
   }
 
   if (strategy === 'pr') {
-    return buildPrDryRunCommands(targetBranch, currentBranch)
+    return buildPrDryRunCommands(targetBranch, currentBranch, options)
   }
 
   if (strategy === 'merge-target') {
@@ -49,6 +50,18 @@ function deleteMrBranchDryRunCommands(mrBranch: string, options: DryRunOptions) 
           label: `删除远程 MR 分支 origin/${mrBranch}`,
           command: 'git',
           args: ['push', 'origin', `:${remoteHeadRef(mrBranch)}`],
+        },
+      ]
+    : []
+}
+
+function requestCommandDryRunCommands(sourceBranch: string, targetBranch: string, options: DryRunOptions) {
+  return options.requestCommand
+    ? [
+        {
+          label: `运行合并请求命令 ${sourceBranch} -> ${targetBranch}`,
+          command: 'sh',
+          args: ['-c', options.requestCommand],
         },
       ]
     : []
@@ -97,11 +110,7 @@ function buildMergeDryRunCommands(
       command: 'git',
       args: ['push', 'origin', `HEAD:${mrBranch}`],
     },
-    {
-      label: `创建合并请求 ${mrBranch} -> ${targetBranch}`,
-      command: 'git',
-      args: ['cnb', 'pull', 'create', '-H', mrBranch, '-B', targetBranch],
-    },
+    ...requestCommandDryRunCommands(mrBranch, targetBranch, options),
     {
       label: `回到当前分支 ${currentBranch}`,
       command: 'git',
@@ -110,7 +119,7 @@ function buildMergeDryRunCommands(
   ]
 }
 
-function buildPrDryRunCommands(targetBranch: string, currentBranch: string) {
+function buildPrDryRunCommands(targetBranch: string, currentBranch: string, options: DryRunOptions) {
   return [
     {
       label: `刷新 origin/${targetBranch}`,
@@ -122,11 +131,7 @@ function buildPrDryRunCommands(targetBranch: string, currentBranch: string) {
       command: 'git',
       args: ['push', '--set-upstream', 'origin', `HEAD:${currentBranch}`],
     },
-    {
-      label: `创建合并请求 ${currentBranch} -> ${targetBranch}`,
-      command: 'git',
-      args: ['cnb', 'pull', 'create', '-H', currentBranch, '-B', targetBranch],
-    },
+    ...requestCommandDryRunCommands(currentBranch, targetBranch, options),
   ]
 }
 
@@ -168,11 +173,7 @@ function buildRebaseDryRunCommands(
       command: 'git',
       args: ['push', '--force-with-lease', '--set-upstream', 'origin', `HEAD:${mrBranch}`],
     },
-    {
-      label: `创建合并请求 ${mrBranch} -> ${targetBranch}`,
-      command: 'git',
-      args: ['cnb', 'pull', 'create', '-H', mrBranch, '-B', targetBranch],
-    },
+    ...requestCommandDryRunCommands(mrBranch, targetBranch, options),
     {
       label: `回到当前分支 ${currentBranch}`,
       command: 'git',
@@ -214,11 +215,7 @@ function buildMergeTargetDryRunCommands(
       command: 'git',
       args: ['push', '--force-with-lease', '--set-upstream', 'origin', `HEAD:${mrBranch}`],
     },
-    {
-      label: `创建合并请求 ${mrBranch} -> ${targetBranch}`,
-      command: 'git',
-      args: ['cnb', 'pull', 'create', '-H', mrBranch, '-B', targetBranch],
-    },
+    ...requestCommandDryRunCommands(mrBranch, targetBranch, options),
     {
       label: `回到当前分支 ${currentBranch}`,
       command: 'git',
@@ -227,7 +224,7 @@ function buildMergeTargetDryRunCommands(
   ]
 }
 
-export function printDryRun(
+export async function printDryRun(
   targetBranch: string,
   currentBranch: string,
   context: any,
@@ -237,6 +234,7 @@ export function printDryRun(
   const { ui } = context
   const mrBranch = mrBranchName(targetBranch, currentBranch)
   const detached = options.detached ?? Boolean(context.detached)
+  const requestCommand = (await readRequestCommandSettings(context)).effective
 
   // dry-run 与正式执行用同样的品牌面板节奏:标题 + 三字段 + 一空行 + dim 免责声明,
   // 然后逐条列出计划命令(? 符号),提示语用 . 标记结束。
@@ -249,9 +247,7 @@ export function printDryRun(
       detached ? `模式      detached` : null,
       '',
       ui.colors.dim(
-        detached
-          ? '不会切换本地分支；不要求工作区干净；冲突时可能使用临时 worktree。'
-          : '不会修改本地分支、远程分支或创建合并请求。',
+        detached ? '不会切换本地分支；不要求工作区干净；冲突时可能使用临时 worktree。' : '不会修改本地分支或远程分支。',
       ),
     ].filter((line): line is string => line !== null),
   )
@@ -260,10 +256,14 @@ export function printDryRun(
   for (const command of buildDryRunCommands(targetBranch, currentBranch, strategy, {
     deleteMrBranch: context.deleteMrBranch && strategy !== 'pr',
     detached,
+    requestCommand,
   })) {
     ui.status('plan', command.label)
     ui.command(command.command, command.args)
   }
 
+  if (!requestCommand) {
+    ui.status('info', '未配置 mr.requestCommand；真实执行只会推送分支并提示下一步。')
+  }
   ui.status('info', '真实执行时会根据远程分支状态跳过不需要的步骤。')
 }

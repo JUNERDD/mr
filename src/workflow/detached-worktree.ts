@@ -12,9 +12,11 @@ import {
   mergeCurrentBranchIntoMr,
   mergeOriginTargetIntoMr,
   mergeTargetBranchIntoMr,
+  requestCompletionLines,
   pushMrBranch,
   pushMrBranchForceWithLease,
   rebaseMrBranchOntoTarget,
+  type PullRequestResult,
 } from './mr-steps.js'
 import { resumeDetachedMrMerge, resumeDetachedMrRebase } from './detached-worktree-resume.js'
 import { getActiveMrRebase } from './rebase-resume.js'
@@ -41,12 +43,12 @@ export async function resumeDetachedConflictIfAny(targetBranch: string, context:
         `MR 分支   ${mrBranch}`,
         `worktree  ${entry.path}`,
       ])
-      await resumeDetachedMrMerge(activeMerge, targetBranch, wtContext)
+      const requestResult = await resumeDetachedMrMerge(activeMerge, targetBranch, wtContext)
       await removeWorktree(entry.path, context)
       context.ui.panel(
         '完成',
         [
-          `合并请求  ${mrBranch} -> ${targetBranch}`,
+          ...requestCompletionLines(mrBranch, targetBranch, requestResult),
           `已清理 worktree`,
           `当前仍在  ${await getCurrentBranchSafe(context)}`,
         ],
@@ -63,12 +65,12 @@ export async function resumeDetachedConflictIfAny(targetBranch: string, context:
         `MR 分支   ${mrBranch}`,
         `worktree  ${entry.path}`,
       ])
-      await resumeDetachedMrRebase(activeRebase, targetBranch, wtContext)
+      const requestResult = await resumeDetachedMrRebase(activeRebase, targetBranch, wtContext)
       await removeWorktree(entry.path, context)
       context.ui.panel(
         '完成',
         [
-          `合并请求  ${mrBranch} -> ${targetBranch}`,
+          ...requestCompletionLines(mrBranch, targetBranch, requestResult),
           `已清理 worktree`,
           `当前仍在  ${await getCurrentBranchSafe(context)}`,
         ],
@@ -86,7 +88,7 @@ export async function runStrategyInWorktree(
   strategy: MrStrategy,
   context: any,
   { currentBranch, mrBranch }: { currentBranch: string; mrBranch: string },
-) {
+): Promise<PullRequestResult> {
   const worktreePath = await resolveWorktreePath(mrBranch, context)
   const existing = (await listWorktrees(context)).find((w) => w.path === worktreePath)
 
@@ -101,18 +103,15 @@ export async function runStrategyInWorktree(
 
   try {
     if (strategy === 'merge') {
-      await runMergeInWorktree(targetBranch, currentBranch, mrBranch, wtContext, context)
-      return
+      return await runMergeInWorktree(targetBranch, currentBranch, mrBranch, wtContext, context)
     }
 
     if (strategy === 'merge-target') {
-      await runMergeTargetInWorktree(targetBranch, currentBranch, mrBranch, wtContext, context)
-      return
+      return await runMergeTargetInWorktree(targetBranch, currentBranch, mrBranch, wtContext, context)
     }
 
     if (strategy === 'rebase') {
-      await runRebaseInWorktree(targetBranch, currentBranch, mrBranch, wtContext, context)
-      return
+      return await runRebaseInWorktree(targetBranch, currentBranch, mrBranch, wtContext, context)
     }
   } catch (error) {
     if (error instanceof CliError) {
@@ -130,6 +129,8 @@ export async function runStrategyInWorktree(
 
     throw error
   }
+
+  throw new CliError(`不支持的 MR 策略: ${strategy}`)
 }
 
 async function runMergeInWorktree(
@@ -159,10 +160,11 @@ async function runMergeInWorktree(
     labelPrefix: '确认合并请求',
   })
   if (result.exitCode !== 0) {
-    wtContext.ui.status('warn', '合并请求创建未成功，可能已存在；MR 分支已推送。')
+    wtContext.ui.status('warn', '合并请求命令未成功；MR 分支已推送。')
   }
 
   await removeWorktree(wtContext.cwd, mainContext)
+  return result
 }
 
 async function runMergeTargetInWorktree(
@@ -179,10 +181,11 @@ async function runMergeTargetInWorktree(
     labelPrefix: '确认合并请求',
   })
   if (result.exitCode !== 0) {
-    wtContext.ui.status('warn', '合并请求创建未成功，可能已存在；MR 分支已推送。')
+    wtContext.ui.status('warn', '合并请求命令未成功；MR 分支已推送。')
   }
 
   await removeWorktree(wtContext.cwd, mainContext)
+  return result
 }
 
 async function runRebaseInWorktree(
@@ -200,10 +203,11 @@ async function runRebaseInWorktree(
     labelPrefix: '确认合并请求',
   })
   if (result.exitCode !== 0) {
-    wtContext.ui.status('warn', '合并请求创建未成功，可能已存在；MR 分支已推送。')
+    wtContext.ui.status('warn', '合并请求命令未成功；MR 分支已推送。')
   }
 
   await removeWorktree(wtContext.cwd, mainContext)
+  return result
 }
 
 async function worktreeStartPoint(

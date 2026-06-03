@@ -3,13 +3,14 @@ import { join } from 'node:path'
 import { CliError, compactOutput } from '../core/errors.js'
 import { git, gitOutput } from '../git/client.js'
 import { rewriteRebaseConflictMarkers } from '../git/conflicts.js'
+import { type PullRequestResult, requestCompletionLines } from './mr-steps.js'
 
 export type ActiveMrRebase = {
   currentBranch: string
   mrBranch: string
 }
 
-type PushAndEnsureRequest = (mrBranch: string, targetBranch: string, context: any) => Promise<void>
+type PushAndEnsureRequest = (mrBranch: string, targetBranch: string, context: any) => Promise<PullRequestResult>
 
 export async function getActiveMrRebase(targetBranch: string, context: any): Promise<ActiveMrRebase | null> {
   for (const stateDirName of ['rebase-merge', 'rebase-apply']) {
@@ -68,11 +69,15 @@ export async function resumeActiveMrRebase(
     await handleContinueFailure(result, currentBranch, targetBranch, mrBranch, context)
   }
 
-  await pushAndEnsureRequest(mrBranch, targetBranch, context)
+  const requestResult = await pushAndEnsureRequest(mrBranch, targetBranch, context)
   await git(['switch', currentBranch], context, { label: `回到 ${currentBranch}`, mutates: true })
-  context.ui.panel('完成', [`合并请求  ${mrBranch} -> ${targetBranch}`, `已回到    ${currentBranch}`], {
-    tone: 'success',
-  })
+  context.ui.panel(
+    '完成',
+    [...requestCompletionLines(mrBranch, targetBranch, requestResult), `已回到    ${currentBranch}`],
+    {
+      tone: 'success',
+    },
+  )
 }
 
 async function handleContinueFailure(

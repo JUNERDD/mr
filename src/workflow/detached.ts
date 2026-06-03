@@ -6,7 +6,13 @@ import { deleteRemoteMrBranchIfRequested } from './delete-mr-branch.js'
 import { resumeDetachedConflictIfAny, runStrategyInWorktree } from './detached-worktree.js'
 import { createPrFromCurrentBranch } from './pr-mr.js'
 import { prepareExistingMrForMerge, prepareExistingMrForMergeTarget, prepareExistingMrForRebase } from './mr-reuse.js'
-import { createPullRequest, getForkPoint, refreshTargetBranch } from './mr-steps.js'
+import {
+  type PullRequestResult,
+  createPullRequest,
+  getForkPoint,
+  refreshTargetBranch,
+  requestCompletionLines,
+} from './mr-steps.js'
 import { resolveMrStrategy } from './strategy.js'
 
 class DetachedMergeConflictError extends CliError {}
@@ -26,7 +32,7 @@ export async function createMrDetached(targetBranch: string, context: any) {
   const mrBranch = mrBranchName(targetBranch, currentBranch)
 
   if (context.dryRun) {
-    printDryRun(targetBranch, currentBranch, context, strategy, { detached: true })
+    await printDryRun(targetBranch, currentBranch, context, strategy, { detached: true })
     return
   }
 
@@ -63,8 +69,8 @@ export async function createMrDetached(targetBranch: string, context: any) {
       }
     }
 
-    await runStrategyInWorktree(targetBranch, strategy, context, { currentBranch, mrBranch })
-    finishDetachedPanel(context, mrBranch, targetBranch, currentBranch)
+    const requestResult = await runStrategyInWorktree(targetBranch, strategy, context, { currentBranch, mrBranch })
+    finishDetachedPanel(context, mrBranch, targetBranch, currentBranch, requestResult)
     return
   }
 
@@ -77,18 +83,18 @@ export async function createMrDetached(targetBranch: string, context: any) {
     }
 
     try {
-      await buildMergeTargetDetached(mrBranch, targetBranch, currentBranch, context)
+      const requestResult = await buildMergeTargetDetached(mrBranch, targetBranch, currentBranch, context)
+      finishDetachedPanel(context, mrBranch, targetBranch, currentBranch, requestResult)
     } catch (error) {
       if (error instanceof DetachedMergeConflictError) {
-        await runStrategyInWorktree(targetBranch, strategy, context, { currentBranch, mrBranch })
-        finishDetachedPanel(context, mrBranch, targetBranch, currentBranch)
+        const requestResult = await runStrategyInWorktree(targetBranch, strategy, context, { currentBranch, mrBranch })
+        finishDetachedPanel(context, mrBranch, targetBranch, currentBranch, requestResult)
         return
       }
 
       throw error
     }
 
-    finishDetachedPanel(context, mrBranch, targetBranch, currentBranch)
     return
   }
 
@@ -100,24 +106,33 @@ export async function createMrDetached(targetBranch: string, context: any) {
   }
 
   try {
-    await buildMergeDetached(mrBranch, targetBranch, currentBranch, context)
+    const requestResult = await buildMergeDetached(mrBranch, targetBranch, currentBranch, context)
+    finishDetachedPanel(context, mrBranch, targetBranch, currentBranch, requestResult)
   } catch (error) {
     if (error instanceof DetachedMergeConflictError) {
-      await runStrategyInWorktree(targetBranch, strategy, context, { currentBranch, mrBranch })
-      finishDetachedPanel(context, mrBranch, targetBranch, currentBranch)
+      const requestResult = await runStrategyInWorktree(targetBranch, strategy, context, { currentBranch, mrBranch })
+      finishDetachedPanel(context, mrBranch, targetBranch, currentBranch, requestResult)
       return
     }
 
     throw error
   }
-
-  finishDetachedPanel(context, mrBranch, targetBranch, currentBranch)
 }
 
-function finishDetachedPanel(context: any, mrBranch: string, targetBranch: string, currentBranch: string) {
-  context.ui.panel('完成', [`合并请求  ${mrBranch} -> ${targetBranch}`, `未切换分支  当前仍在 ${currentBranch}`], {
-    tone: 'success',
-  })
+function finishDetachedPanel(
+  context: any,
+  mrBranch: string,
+  targetBranch: string,
+  currentBranch: string,
+  requestResult?: PullRequestResult,
+) {
+  context.ui.panel(
+    '完成',
+    [...requestCompletionLines(mrBranch, targetBranch, requestResult), `未切换分支  当前仍在 ${currentBranch}`],
+    {
+      tone: 'success',
+    },
+  )
 }
 
 async function buildMergeDetached(mrBranch: string, targetBranch: string, currentBranch: string, context: any) {
@@ -156,7 +171,7 @@ async function buildMergeDetached(mrBranch: string, targetBranch: string, curren
   } else {
     context.ui.status('skip', `${mrBranch} 已包含当前分支与目标分支，无需更新。`)
   }
-  await ensurePullRequest(mrBranch, targetBranch, context)
+  return ensurePullRequest(mrBranch, targetBranch, context)
 }
 
 async function buildMergeTargetDetached(mrBranch: string, targetBranch: string, currentBranch: string, context: any) {
@@ -172,7 +187,7 @@ async function buildMergeTargetDetached(mrBranch: string, targetBranch: string, 
 
   context.ui.step('推送', `使用 force-with-lease 更新 ${mrBranch}。`)
   await pushCommit(head, mrBranch, context, { force: true })
-  await ensurePullRequest(mrBranch, targetBranch, context)
+  return ensurePullRequest(mrBranch, targetBranch, context)
 }
 
 async function resolveOid(ref: string, context: any) {
@@ -199,13 +214,14 @@ async function mergeAndCommit(base: string, incoming: string, message: string, c
   return commitTree(result.tree, [base, incoming], message, context)
 }
 
-async function ensurePullRequest(mrBranch: string, targetBranch: string, context: any) {
-  context.ui.step('合并请求', `创建合并请求: ${mrBranch} -> ${targetBranch}。`)
+async function ensurePullRequest(mrBranch: string, targetBranch: string, context: any): Promise<PullRequestResult> {
+  context.ui.step('合并请求', `处理合并请求: ${mrBranch} -> ${targetBranch}。`)
   const result = await createPullRequest(mrBranch, targetBranch, context, {
     allowFailure: true,
     labelPrefix: '确认合并请求',
   })
   if (result.exitCode !== 0) {
-    context.ui.status('warn', '合并请求创建未成功，可能已存在；MR 分支已推送。')
+    context.ui.status('warn', '合并请求命令未成功；MR 分支已推送。')
   }
+  return result
 }

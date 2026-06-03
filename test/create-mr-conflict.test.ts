@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -28,26 +28,11 @@ async function gitWithEnv(cwd: string, args: string[], env: NodeJS.ProcessEnv) {
 test('merge conflicts can be continued by running mr again after staging resolutions', async () => {
   const root = await mkdtemp(join(tmpdir(), 'mr-merge-conflict-'))
   const originalCwd = process.cwd()
-  const originalPath = process.env.PATH
 
   try {
     const remote = join(root, 'origin.git')
     const repo = join(root, 'repo')
-    const bin = join(root, 'bin')
     await mkdir(repo)
-    await mkdir(bin)
-    await writeFile(
-      join(bin, 'git-cnb'),
-      [
-        '#!/bin/sh',
-        'if [ "$1" = "-h" ]; then exit 0; fi',
-        'if [ "$1" = "pull" ] && [ "$2" = "create" ]; then exit 0; fi',
-        'echo "unexpected git cnb $*" >&2',
-        'exit 1',
-        '',
-      ].join('\n'),
-    )
-    await chmod(join(bin, 'git-cnb'), 0o755)
 
     await git(root, ['init', '--bare', remote])
     await git(repo, ['init'])
@@ -71,9 +56,9 @@ test('merge conflicts can be continued by running mr again after staging resolut
     await git(repo, ['commit', '-am', 'feature'])
 
     process.chdir(repo)
-    process.env.PATH = `${bin}:${originalPath ?? ''}`
 
     const context = createContext({
+      detached: false,
       ui: createUi({
         quiet: true,
         stream: {
@@ -116,11 +101,6 @@ test('merge conflicts can be continued by running mr again after staging resolut
     )
   } finally {
     process.chdir(originalCwd)
-    if (originalPath === undefined) {
-      delete process.env.PATH
-    } else {
-      process.env.PATH = originalPath
-    }
     await rm(root, { recursive: true, force: true })
   }
 })
@@ -128,26 +108,11 @@ test('merge conflicts can be continued by running mr again after staging resolut
 test('rebase conflicts leave the MR branch rebase unresolved', async () => {
   const root = await mkdtemp(join(tmpdir(), 'mr-conflict-'))
   const originalCwd = process.cwd()
-  const originalPath = process.env.PATH
 
   try {
     const remote = join(root, 'origin.git')
     const repo = join(root, 'repo')
-    const bin = join(root, 'bin')
     await mkdir(repo)
-    await mkdir(bin)
-    await writeFile(
-      join(bin, 'git-cnb'),
-      [
-        '#!/bin/sh',
-        'if [ "$1" = "-h" ]; then exit 0; fi',
-        'if [ "$1" = "pull" ] && [ "$2" = "create" ]; then exit 0; fi',
-        'echo "unexpected git cnb $*" >&2',
-        'exit 1',
-        '',
-      ].join('\n'),
-    )
-    await chmod(join(bin, 'git-cnb'), 0o755)
 
     await git(root, ['init', '--bare', remote])
     await git(repo, ['init'])
@@ -175,9 +140,9 @@ test('rebase conflicts leave the MR branch rebase unresolved', async () => {
     await git(repo, ['commit', '-m', 'feature'])
 
     process.chdir(repo)
-    process.env.PATH = `${bin}:${originalPath ?? ''}`
 
     const context = createContext({
+      detached: false,
       rebase: true,
       ui: createUi({
         quiet: true,
@@ -230,11 +195,6 @@ test('rebase conflicts leave the MR branch rebase unresolved', async () => {
     await git(repo, ['merge-base', '--is-ancestor', 'origin/test', 'origin/mr/test/feature/demo'])
   } finally {
     process.chdir(originalCwd)
-    if (originalPath === undefined) {
-      delete process.env.PATH
-    } else {
-      process.env.PATH = originalPath
-    }
     await rm(root, { recursive: true, force: true })
   }
 })
@@ -242,26 +202,11 @@ test('rebase conflicts leave the MR branch rebase unresolved', async () => {
 test('rebase conflict labels preserve replayed commit authors without mislabeling the base side', async () => {
   const root = await mkdtemp(join(tmpdir(), 'mr-conflict-authors-'))
   const originalCwd = process.cwd()
-  const originalPath = process.env.PATH
 
   try {
     const remote = join(root, 'origin.git')
     const repo = join(root, 'repo')
-    const bin = join(root, 'bin')
     await mkdir(repo)
-    await mkdir(bin)
-    await writeFile(
-      join(bin, 'git-cnb'),
-      [
-        '#!/bin/sh',
-        'if [ "$1" = "-h" ]; then exit 0; fi',
-        'if [ "$1" = "pull" ] && [ "$2" = "create" ]; then exit 0; fi',
-        'echo "unexpected git cnb $*" >&2',
-        'exit 1',
-        '',
-      ].join('\n'),
-    )
-    await chmod(join(bin, 'git-cnb'), 0o755)
 
     await git(root, ['init', '--bare', remote])
     await git(repo, ['init'])
@@ -297,9 +242,9 @@ test('rebase conflict labels preserve replayed commit authors without mislabelin
     })
 
     process.chdir(repo)
-    process.env.PATH = `${bin}:${originalPath ?? ''}`
 
     const context = createContext({
+      detached: false,
       rebase: true,
       ui: createUi({
         quiet: true,
@@ -330,11 +275,6 @@ test('rebase conflict labels preserve replayed commit authors without mislabelin
     )
   } finally {
     process.chdir(originalCwd)
-    if (originalPath === undefined) {
-      delete process.env.PATH
-    } else {
-      process.env.PATH = originalPath
-    }
     await rm(root, { recursive: true, force: true })
   }
 })

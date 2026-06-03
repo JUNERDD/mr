@@ -44,7 +44,7 @@ export const MR_STRATEGY_CHOICES: Array<{ description: string; label: string; va
   {
     value: 'pr',
     label: 'pr',
-    description: '直接用当前分支创建 PR，不创建 MR 分支',
+    description: '直接推送当前分支作为请求源，不创建 MR 分支',
   },
 ]
 
@@ -189,7 +189,7 @@ export async function readDetachedSettings(context: any): Promise<DetachedSettin
     return { effective: global, global, local, localAvailable, source: 'global' }
   }
 
-  return { effective: false, global, local, localAvailable, source: 'builtin' }
+  return { effective: true, global, local, localAvailable, source: 'builtin' }
 }
 
 export async function writeDetachedConfig(value: boolean, scope: ConfigScope, context: any) {

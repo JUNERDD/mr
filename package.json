@@ -1,12 +1,12 @@
 {
   "name": "mr",
   "version": "0.6.6",
-  "description": "CNB merge request helper CLI.",
+  "description": "Generic Git merge request branch helper CLI.",
   "keywords": [
     "cli",
-    "cnb",
     "git",
-    "merge-request"
+    "merge-request",
+    "pull-request"
   ],
   "license": "MIT",
   "repository": {

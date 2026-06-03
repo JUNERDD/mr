@@ -6,7 +6,7 @@ import {
   isAncestor,
   remoteBranchExists,
 } from '../git/client.js'
-import { createPullRequest } from './mr-steps.js'
+import { createPullRequest, requestCompletionLines } from './mr-steps.js'
 
 export async function prepareExistingMrForMerge(
   mrBranch: string,
@@ -59,9 +59,9 @@ export async function prepareExistingMrForMergeTarget(
   const mrContainsTarget = await isAncestor(`origin/${targetBranch}`, `origin/${mrBranch}`, context)
 
   if (mrContainsCurrent && mrContainsTarget && !mrMergedTarget) {
-    ui.step('合并请求', 'MR 分支已包含当前分支和目标分支，只创建远程合并请求。')
-    await createPullRequest(mrBranch, targetBranch, context)
-    ui.panel('完成', [`合并请求: ${mrBranch} -> ${targetBranch}`], { tone: 'success' })
+    ui.step('合并请求', 'MR 分支已包含当前分支和目标分支，只处理远程合并请求。')
+    const result = await createPullRequest(mrBranch, targetBranch, context)
+    ui.panel('完成', requestCompletionLines(mrBranch, targetBranch, result), { tone: 'success' })
     return { done: true }
   }
 
@@ -118,11 +118,11 @@ export async function prepareExistingMrForRebase(
   if (mrBasedOnTarget && (mrContainsCurrentBranch || mrMatchesCurrentChanges || mrReplaysCurrentCommits)) {
     const reason =
       mrReplaysCurrentCommits && !mrMatchesCurrentChanges && !mrContainsCurrentBranch
-        ? 'MR 分支已包含当前分支的 rebase 提交序列，只创建远程合并请求。'
-        : 'MR 分支已匹配当前分支的等价改动，只创建远程合并请求。'
+        ? 'MR 分支已包含当前分支的 rebase 提交序列，只处理远程合并请求。'
+        : 'MR 分支已匹配当前分支的等价改动，只处理远程合并请求。'
     ui.step('合并请求', reason)
-    await createPullRequest(mrBranch, targetBranch, context)
-    ui.panel('完成', [`合并请求: ${mrBranch} -> ${targetBranch}`], { tone: 'success' })
+    const result = await createPullRequest(mrBranch, targetBranch, context)
+    ui.panel('完成', requestCompletionLines(mrBranch, targetBranch, result), { tone: 'success' })
     return { done: true }
   }
 

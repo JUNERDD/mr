@@ -4,7 +4,7 @@ import { setCurrentArgv } from './runtime-state.js'
 
 declare const __PACKAGE_VERSION__: string
 
-const DESCRIPTION = '从目标分支准备 CNB 合并请求分支，并在本地处理冲突'
+const DESCRIPTION = '从目标分支准备通用 Git 合并请求分支，并在本地处理冲突'
 const PACKAGE_VERSION = typeof __PACKAGE_VERSION__ === 'undefined' ? '0.0.0-dev' : __PACKAGE_VERSION__
 
 export async function main(argv = process.argv) {

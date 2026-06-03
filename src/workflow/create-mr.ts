@@ -15,7 +15,6 @@ import {
   remoteBranchExists,
 } from '../git/client.js'
 import { rewriteRebaseConflictMarkers } from '../git/conflicts.js'
-import { run } from '../runtime/runner.js'
 import { deleteRemoteMrBranchIfRequested } from './delete-mr-branch.js'
 import { createMrByMerge } from './merge-mr.js'
 import { getActiveMrMerge } from './merge-resume.js'
@@ -24,24 +23,10 @@ import { createPrFromCurrentBranch } from './pr-mr.js'
 import { getActiveMrRebase, resumeActiveMrRebase } from './rebase-resume.js'
 import { restoreInitialBranch, withRecoveryDetails } from './recovery.js'
 import { createMrDetached } from './detached.js'
+import { type PullRequestResult, createPullRequest, requestCompletionLines } from './mr-steps.js'
 import { resolveDetached, resolveMrStrategy } from './strategy.js'
 
 class RebaseConflictError extends CliError {}
-
-async function createPullRequest(
-  mrBranch: string,
-  targetBranch: string,
-  context: any,
-  { allowFailure = false, labelPrefix = '创建合并请求' } = {},
-) {
-  return run('git', ['cnb', 'pull', 'create', '-H', mrBranch, '-B', targetBranch], {
-    label: `${labelPrefix} ${mrBranch} -> ${targetBranch}`,
-    allowFailure,
-    showOutput: true,
-    mutates: true,
-    context,
-  })
-}
 
 export async function createMrFromTargetBranch(targetBranch: string, context: any) {
   await ensureGitContext(context)
@@ -101,7 +86,7 @@ async function createMrByRebase(targetBranch: string, context: any) {
   if (context.dryRun) {
     // 编辑性排版:品牌面板永远是输出的第一眼,工作区脏不脏的提醒留到末尾做收尾脚注,
     // 不去抢 "mr 预览" 这个标题的注意力。
-    printDryRun(targetBranch, currentBranch, context, 'rebase')
+    await printDryRun(targetBranch, currentBranch, context, 'rebase')
     const status = await getTrackedWorkingTreeStatus(context)
     if (status) {
       ui.status('warn', '工作区存在 tracked 改动；真实执行会先停止。')
@@ -113,6 +98,7 @@ async function createMrByRebase(targetBranch: string, context: any) {
   await ensureCleanWorkingTree(context)
 
   const mrBranch = mrBranchName(targetBranch, currentBranch)
+  let requestResult: PullRequestResult | undefined
   // 品牌面板:整次执行里唯一一处 bold cyan "mr",副标题给出本次任务定语,
   // 正文用对齐到 col 11 的 key/value 列表(中文 4 字 = 8 visual col + 2 空格),
   // 让目标 / 当前 / MR 三个字段在视觉上形成一根隐形垂直线。
@@ -146,7 +132,7 @@ async function createMrByRebase(targetBranch: string, context: any) {
 
     await prepareLocalMrBranch(mrBranch, currentBranch, context)
     await rebaseMrBranch(mrBranch, currentBranch, targetBranch, forkPoint, context)
-    await pushAndEnsureRequest(mrBranch, targetBranch, context)
+    requestResult = await pushAndEnsureRequest(mrBranch, targetBranch, context)
     await git(['switch', currentBranch], context, { label: `回到 ${currentBranch}`, mutates: true })
   } catch (error) {
     if (error instanceof RebaseConflictError) {
@@ -159,7 +145,9 @@ async function createMrByRebase(targetBranch: string, context: any) {
 
   // 完成面板:与品牌面板同样的对齐方式,但只剩两行,刻意短小,
   // 形成"开 — 步骤 — 收"的三段结构,最后一行是当前分支,告诉用户你在哪。
-  ui.panel('完成', [`合并请求  ${mrBranch} -> ${targetBranch}`, `已回到    ${currentBranch}`], { tone: 'success' })
+  ui.panel('完成', [...requestCompletionLines(mrBranch, targetBranch, requestResult), `已回到    ${currentBranch}`], {
+    tone: 'success',
+  })
 }
 
 async function refreshTargetBranch(targetBranch: string, context: any) {
@@ -216,11 +204,11 @@ async function prepareExistingMrBranch(
   if (mrBasedOnTarget && (mrContainsCurrentBranch || mrMatchesCurrentChanges || mrReplaysCurrentCommits)) {
     const reason =
       mrReplaysCurrentCommits && !mrMatchesCurrentChanges && !mrContainsCurrentBranch
-        ? 'MR 分支已包含当前分支的 rebase 提交序列，只创建远程合并请求。'
-        : 'MR 分支已匹配当前分支的等价改动，只创建远程合并请求。'
+        ? 'MR 分支已包含当前分支的 rebase 提交序列，只处理远程合并请求。'
+        : 'MR 分支已匹配当前分支的等价改动，只处理远程合并请求。'
     ui.step('合并请求', reason)
-    await createPullRequest(mrBranch, targetBranch, context)
-    ui.panel('完成', [`合并请求: ${mrBranch} -> ${targetBranch}`], { tone: 'success' })
+    const result = await createPullRequest(mrBranch, targetBranch, context)
+    ui.panel('完成', requestCompletionLines(mrBranch, targetBranch, result), { tone: 'success' })
     return { done: true }
   }
 
@@ -281,19 +269,20 @@ async function rebaseMrBranch(
   })
 }
 
-async function pushAndEnsureRequest(mrBranch: string, targetBranch: string, context: any) {
+async function pushAndEnsureRequest(mrBranch: string, targetBranch: string, context: any): Promise<PullRequestResult> {
   context.ui.step('推送', `使用 force-with-lease 更新 ${mrBranch}。`)
   await git(['push', '--force-with-lease', '--set-upstream', 'origin', `HEAD:${mrBranch}`], context, {
     label: `推送 ${mrBranch}`,
     mutates: true,
   })
 
-  context.ui.step('合并请求', `创建合并请求: ${mrBranch} -> ${targetBranch}。`)
+  context.ui.step('合并请求', `处理合并请求: ${mrBranch} -> ${targetBranch}。`)
   const result = await createPullRequest(mrBranch, targetBranch, context, {
     allowFailure: true,
     labelPrefix: '确认合并请求',
   })
   if (result.exitCode !== 0) {
-    context.ui.status('warn', '合并请求创建未成功，可能已存在；MR 分支已推送。')
+    context.ui.status('warn', '合并请求命令未成功；MR 分支已推送。')
   }
+  return result
 }

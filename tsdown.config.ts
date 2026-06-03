@@ -6,7 +6,7 @@ const require = createRequire(import.meta.url)
 const packageJson = require('./package.json') as { version: string }
 
 const requireShim =
-  'import{createRequire as __cnbCreateRequire}from"node:module";const require=__cnbCreateRequire(import.meta.url);'
+  'import{createRequire as __mrCreateRequire}from"node:module";const require=__mrCreateRequire(import.meta.url);'
 
 export default defineConfig({
   entry: ['src/index.ts', 'src/commands/**/*.{ts,tsx}'],

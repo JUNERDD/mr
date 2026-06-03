@@ -8,24 +8,14 @@ import {
   isAncestor,
   remoteBranchExists,
 } from '../git/client.js'
-import { run } from '../runtime/runner.js'
-
-async function createPullRequest(currentBranch: string, targetBranch: string, context: any) {
-  return run('git', ['cnb', 'pull', 'create', '-H', currentBranch, '-B', targetBranch], {
-    label: `确认合并请求 ${currentBranch} -> ${targetBranch}`,
-    allowFailure: true,
-    showOutput: true,
-    mutates: true,
-    context,
-  })
-}
+import { createPullRequest, requestCompletionLines } from './mr-steps.js'
 
 export async function createPrFromCurrentBranch(targetBranch: string, context: any) {
   const { ui } = context
   const currentBranch = await getCurrentBranch(context)
 
   if (context.dryRun) {
-    printDryRun(targetBranch, currentBranch, context, 'pr')
+    await printDryRun(targetBranch, currentBranch, context, 'pr')
     const status = await getTrackedWorkingTreeStatus(context)
     if (status) {
       ui.status('warn', '工作区存在 tracked 改动；真实执行会先停止。')
@@ -39,7 +29,7 @@ export async function createPrFromCurrentBranch(targetBranch: string, context: a
   ui.panel('mr  直接合并请求', [
     `目标分支  ${targetBranch}`,
     `当前分支  ${currentBranch}`,
-    `PR 源分支 ${currentBranch}`,
+    `请求源分支 ${currentBranch}`,
   ])
 
   ui.step('检查', `确认远程目标分支 origin/${targetBranch}。`)
@@ -66,10 +56,10 @@ export async function createPrFromCurrentBranch(targetBranch: string, context: a
   ui.step('合并请求', `确认合并请求: ${currentBranch} -> ${targetBranch}。`)
   const result = await createPullRequest(currentBranch, targetBranch, context)
   if (result.exitCode !== 0) {
-    ui.status('warn', '合并请求创建未成功，可能已存在；当前分支已推送。')
+    ui.status('warn', '合并请求命令未成功；当前分支已推送。')
   }
 
-  ui.panel('完成', [`合并请求  ${currentBranch} -> ${targetBranch}`], { tone: 'success' })
+  ui.panel('完成', requestCompletionLines(currentBranch, targetBranch, result), { tone: 'success' })
 }
 
 async function refreshTargetBranch(targetBranch: string, context: any) {

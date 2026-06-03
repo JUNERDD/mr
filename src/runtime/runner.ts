@@ -14,6 +14,7 @@ const SUCCESS_RESULT = { exitCode: 0, stdout: '', stderr: '', all: '' }
 type RunOptions = {
   allowFailure?: boolean
   context?: any
+  env?: NodeJS.ProcessEnv
   label?: string
   mutates?: boolean
   quiet?: boolean
@@ -23,7 +24,7 @@ type RunOptions = {
 export async function run(
   command: string,
   args: string[],
-  { label, allowFailure = false, quiet = false, showOutput = false, mutates = false, context }: RunOptions = {},
+  { label, allowFailure = false, quiet = false, showOutput = false, mutates = false, context, env }: RunOptions = {},
 ): Promise<any> {
   const ui = context?.ui ?? createUi()
   const verbose = Boolean(context?.verbose)
@@ -58,7 +59,7 @@ export async function run(
     }
   }
 
-  const result = await execute(command, args, spinner, ui, commandLabel, context)
+  const result = await execute(command, args, spinner, ui, commandLabel, context, env)
   const succeeded = result.exitCode === 0
   persistResult(spinner, ui, quiet, succeeded, commandLabel)
   maybePrintOutput(result, ui, quiet, verbose, showOutput, succeeded)
@@ -81,10 +82,17 @@ async function execute(
   ui: ReturnType<typeof createUi>,
   commandLabel: string,
   context?: any,
+  env?: NodeJS.ProcessEnv,
 ) {
   try {
     const cwd = context?.cwd
-    return await execa(command, args, { all: true, reject: false, ...(cwd ? { cwd } : {}) })
+    const childEnv = env ? { ...process.env, ...context?.env, ...env } : undefined
+    return await execa(command, args, {
+      all: true,
+      reject: false,
+      ...(cwd ? { cwd } : {}),
+      ...(childEnv ? { env: childEnv } : {}),
+    })
   } catch (error: any) {
     if (spinner) {
       spinner.stopAndPersist({

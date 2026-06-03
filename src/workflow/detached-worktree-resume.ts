@@ -1,12 +1,12 @@
 import { CliError } from '../core/errors.js'
 import { fetchRemoteBranch, git, gitOutput, isAncestor } from '../git/client.js'
-import { createPullRequest, pushMrBranch, pushMrBranchForceWithLease } from './mr-steps.js'
+import { type PullRequestResult, createPullRequest, pushMrBranch, pushMrBranchForceWithLease } from './mr-steps.js'
 
 export async function resumeDetachedMrMerge(
   activeMerge: { currentBranch: string; mrBranch: string },
   targetBranch: string,
   wtContext: any,
-) {
+): Promise<PullRequestResult> {
   const { currentBranch, mrBranch } = activeMerge
   const unmerged = await git(['diff', '--name-only', '--diff-filter=U'], wtContext, {
     quiet: true,
@@ -37,15 +37,16 @@ export async function resumeDetachedMrMerge(
     labelPrefix: '确认合并请求',
   })
   if (result.exitCode !== 0) {
-    wtContext.ui.status('warn', '合并请求创建未成功，可能已存在；MR 分支已推送。')
+    wtContext.ui.status('warn', '合并请求命令未成功；MR 分支已推送。')
   }
+  return result
 }
 
 export async function resumeDetachedMrRebase(
   activeRebase: { currentBranch: string; mrBranch: string },
   targetBranch: string,
   wtContext: any,
-) {
+): Promise<PullRequestResult> {
   const { currentBranch, mrBranch } = activeRebase
   const unmerged = await git(['diff', '--name-only', '--diff-filter=U'], wtContext, {
     quiet: true,
@@ -77,6 +78,7 @@ export async function resumeDetachedMrRebase(
     labelPrefix: '确认合并请求',
   })
   if (pr.exitCode !== 0) {
-    wtContext.ui.status('warn', '合并请求创建未成功，可能已存在；MR 分支已推送。')
+    wtContext.ui.status('warn', '合并请求命令未成功；MR 分支已推送。')
   }
+  return pr
 }

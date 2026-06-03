@@ -7,6 +7,7 @@ import { invokedNameFromArgv } from '../cli/invocation.js'
 import { getCurrentArgv } from '../cli/runtime-state.js'
 import { createContext } from '../core/context.js'
 import { CliError, compactOutput } from '../core/errors.js'
+import { REQUEST_PROVIDER_VALUES } from '../core/request-command.js'
 import { MR_STRATEGY_VALUES } from '../core/settings.js'
 import { isInteractiveInvocation, resolveTargetFromInvocation } from '../core/targets.js'
 import { runLifecycleCommand } from '../runtime/lifecycle.js'
@@ -14,7 +15,7 @@ import { assertInteractiveTerminal, TargetPicker } from '../ui/select-target.js'
 import { ConfigCommand } from '../workflow/config-command.js'
 import { createMrFromTargetBranch } from '../workflow/create-mr.js'
 
-export const description = `从目标分支准备 CNB 合并请求分支，并在本地处理冲突。
+export const description = `从目标分支准备通用 Git 合并请求分支，并在本地处理冲突。
 
 常用示例:
   mr                         交互式选择 master / test / prerelease
@@ -25,7 +26,7 @@ export const description = `从目标分支准备 CNB 合并请求分支，并�
   mr release/2026-05         指定任意目标分支
 
 维护命令:
-  mr --config                交互式查看和设置默认 MR 策略
+  mr --config                交互式查看和设置默认策略、无感模式和请求 provider
   mr --update                更新到最新 release 预构建产物
   mr --uninstall             卸载 mr
 
@@ -51,11 +52,11 @@ export const args = zod.tuple([
 ])
 
 export const options = zod.object({
-  config: zod.boolean().describe(describedFlag('交互式查看和设置默认 MR 策略')),
+  config: zod.boolean().describe(describedFlag('交互式查看和设置默认策略、无感模式和请求 provider')),
   dryRun: zod.boolean().describe(describedFlag('打印执行计划，不修改本地或远程状态')),
   global: zod.boolean().describe(describedFlag('配合 --config 写入全局 Git config')),
   local: zod.boolean().describe(describedFlag('配合 --config 写入当前仓库 Git config')),
-  pr: zod.boolean().describe(describedFlag('临时覆盖为直接 PR 策略，不创建 MR 分支', '未指定')),
+  pr: zod.boolean().describe(describedFlag('临时覆盖为直接推送当前分支策略，不创建 MR 分支', '未指定')),
   show: zod.boolean().describe(describedFlag('配合 --config 只显示当前配置')),
   strategy: zod
     .enum(MR_STRATEGY_VALUES)
@@ -66,10 +67,30 @@ export const options = zod.object({
         valueDescription: 'strategy',
       }),
     ),
+  requestProvider: zod
+    .enum(REQUEST_PROVIDER_VALUES)
+    .optional()
+    .describe(
+      option({
+        description: '配合 --config 设置合并请求 provider 预设',
+        valueDescription: 'provider',
+      }),
+    ),
+  requestCommand: zod
+    .string()
+    .optional()
+    .describe(
+      option({
+        description: '配合 --config 设置自定义合并请求命令',
+        valueDescription: 'command',
+      }),
+    ),
   uninstall: zod.boolean().describe(describedFlag('卸载 mr')),
   update: zod.boolean().describe(describedFlag('更新到最新 release 预构建产物')),
-  unset: zod.boolean().describe(describedFlag('配合 --config 清除指定作用域的 mr.strategy')),
-  verbose: zod.boolean().describe(describedFlag('显示 git/CNB 命令和完整输出')),
+  unset: zod.boolean().describe(describedFlag('配合 --config 清除指定作用域的 mr.strategy / mr.detached')),
+  unsetRequestCommand: zod.boolean().describe(describedFlag('配合 --config 清除指定作用域的 mr.requestCommand')),
+  unsetRequestProvider: zod.boolean().describe(describedFlag('配合 --config 清除指定作用域的 mr.requestProvider')),
+  verbose: zod.boolean().describe(describedFlag('显示 git 命令和完整输出')),
   quiet: zod.boolean().describe(describedFlag('只输出错误')),
   color: zod.boolean().describe(describedFlag('强制彩色输出', '自动')),
   noColor: zod.boolean().optional().describe(describedFlag('禁用彩色输出', '自动')),
@@ -82,8 +103,8 @@ export const options = zod.object({
   mergeTarget: zod.boolean().describe(describedFlag('临时覆盖为 merge-target 策略', '未指定')),
   detached: zod
     .boolean()
-    .describe(describedFlag('无感模式：不切本地分支，用 plumbing 或临时 worktree 准备 MR', '未指定')),
-  noDetached: zod.boolean().optional().describe(describedFlag('临时关闭无感模式', '未指定')),
+    .describe(describedFlag('显式开启无感模式：不切本地分支，用 plumbing 或临时 worktree 准备 MR', '未指定')),
+  noDetached: zod.boolean().optional().describe(describedFlag('临时使用传统切分支模式', '未指定')),
   rmMr: zod.boolean().describe(describedFlag('执行 MR 分支策略前先删除对应远程 MR 分支')),
 })
 

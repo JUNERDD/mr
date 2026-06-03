@@ -9,27 +9,12 @@ import {
   isAncestor,
   remoteBranchExists,
 } from '../git/client.js'
-import { run } from '../runtime/runner.js'
 import { deleteRemoteMrBranchIfRequested } from './delete-mr-branch.js'
 import { getActiveMrMerge, resumeActiveMrMerge } from './merge-resume.js'
+import { type PullRequestResult, createPullRequest, requestCompletionLines } from './mr-steps.js'
 import { restoreInitialBranch, withRecoveryDetails } from './recovery.js'
 
 class MergeTargetConflictError extends CliError {}
-
-async function createPullRequest(
-  mrBranch: string,
-  targetBranch: string,
-  context: any,
-  { allowFailure = false, labelPrefix = '创建合并请求' } = {},
-) {
-  return run('git', ['cnb', 'pull', 'create', '-H', mrBranch, '-B', targetBranch], {
-    label: `${labelPrefix} ${mrBranch} -> ${targetBranch}`,
-    allowFailure,
-    showOutput: true,
-    mutates: true,
-    context,
-  })
-}
 
 export async function createMrByMergeTarget(targetBranch: string, context: any) {
   const { ui } = context
@@ -41,7 +26,7 @@ export async function createMrByMergeTarget(targetBranch: string, context: any) 
 
   const currentBranch = await getCurrentBranch(context)
   if (context.dryRun) {
-    printDryRun(targetBranch, currentBranch, context, 'merge-target')
+    await printDryRun(targetBranch, currentBranch, context, 'merge-target')
     const status = await getTrackedWorkingTreeStatus(context)
     if (status) {
       ui.status('warn', '工作区存在 tracked 改动；真实执行会先停止。')
@@ -52,6 +37,7 @@ export async function createMrByMergeTarget(targetBranch: string, context: any) 
 
   await ensureCleanWorkingTree(context)
   const mrBranch = mrBranchName(targetBranch, currentBranch)
+  let requestResult: PullRequestResult | undefined
 
   ui.panel('mr  合并请求', [`目标分支  ${targetBranch}`, `当前分支  ${currentBranch}`, `MR 分支   ${mrBranch}`])
 
@@ -81,7 +67,7 @@ export async function createMrByMergeTarget(targetBranch: string, context: any) 
 
     await prepareLocalMrBranch(mrBranch, currentBranch, context)
     await mergeTargetBranch(mrBranch, targetBranch, context)
-    await pushAndEnsureRequest(mrBranch, targetBranch, false, context)
+    requestResult = await pushAndEnsureRequest(mrBranch, targetBranch, false, context)
     await git(['switch', currentBranch], context, { label: `回到 ${currentBranch}`, mutates: true })
   } catch (error) {
     if (error instanceof MergeTargetConflictError) {
@@ -92,7 +78,9 @@ export async function createMrByMergeTarget(targetBranch: string, context: any) 
     throw withRecoveryDetails(error, recovery)
   }
 
-  ui.panel('完成', [`合并请求  ${mrBranch} -> ${targetBranch}`, `已回到    ${currentBranch}`], { tone: 'success' })
+  ui.panel('完成', [...requestCompletionLines(mrBranch, targetBranch, requestResult), `已回到    ${currentBranch}`], {
+    tone: 'success',
+  })
 }
 
 async function refreshTargetBranch(targetBranch: string, context: any) {
@@ -118,9 +106,9 @@ async function prepareExistingMrBranch(mrBranch: string, targetBranch: string, c
   const mrContainsTarget = await isAncestor(`origin/${targetBranch}`, `origin/${mrBranch}`, context)
 
   if (mrContainsCurrent && mrContainsTarget && !mrMergedTarget) {
-    ui.step('合并请求', 'MR 分支已包含当前分支和目标分支，只创建远程合并请求。')
-    await createPullRequest(mrBranch, targetBranch, context)
-    ui.panel('完成', [`合并请求: ${mrBranch} -> ${targetBranch}`], { tone: 'success' })
+    ui.step('合并请求', 'MR 分支已包含当前分支和目标分支，只处理远程合并请求。')
+    const result = await createPullRequest(mrBranch, targetBranch, context)
+    ui.panel('完成', requestCompletionLines(mrBranch, targetBranch, result), { tone: 'success' })
     return { done: true }
   }
 
@@ -171,19 +159,25 @@ async function mergeTargetBranch(mrBranch: string, targetBranch: string, context
   })
 }
 
-async function pushAndEnsureRequest(mrBranch: string, targetBranch: string, _requestCreated: boolean, context: any) {
+async function pushAndEnsureRequest(
+  mrBranch: string,
+  targetBranch: string,
+  _requestCreated: boolean,
+  context: any,
+): Promise<PullRequestResult> {
   context.ui.step('推送', `使用 force-with-lease 更新 ${mrBranch}。`)
   await git(['push', '--force-with-lease', '--set-upstream', 'origin', `HEAD:${mrBranch}`], context, {
     label: `推送 ${mrBranch}`,
     mutates: true,
   })
 
-  context.ui.step('合并请求', `创建合并请求: ${mrBranch} -> ${targetBranch}。`)
+  context.ui.step('合并请求', `处理合并请求: ${mrBranch} -> ${targetBranch}。`)
   const result = await createPullRequest(mrBranch, targetBranch, context, {
     allowFailure: true,
     labelPrefix: '确认合并请求',
   })
   if (result.exitCode !== 0) {
-    context.ui.status('warn', '合并请求创建未成功，可能已存在；MR 分支已推送。')
+    context.ui.status('warn', '合并请求命令未成功；MR 分支已推送。')
   }
+  return result
 }

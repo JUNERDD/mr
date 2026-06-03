@@ -1,5 +1,6 @@
 import { CliError, compactOutput } from '../core/errors.js'
 import { getCurrentBranch, git } from '../git/client.js'
+import type { PullRequestResult } from './mr-steps.js'
 
 type ActiveMrMerge = {
   currentBranch: string
@@ -11,7 +12,7 @@ type PushAndEnsureRequest = (
   targetBranch: string,
   requestCreated: boolean,
   context: any,
-) => Promise<void>
+) => Promise<PullRequestResult | undefined>
 
 export async function getActiveMrMerge(targetBranch: string, context: any): Promise<ActiveMrMerge | null> {
   const mergeHead = await git(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], context, {

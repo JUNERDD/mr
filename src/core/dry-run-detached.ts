@@ -6,7 +6,7 @@ type DryRunCommand = {
   label: string
 }
 
-type DryRunOptions = { deleteMrBranch?: boolean }
+type DryRunOptions = { deleteMrBranch?: boolean; requestCommand?: string | null }
 
 function remoteHeadRef(branch: string) {
   return `refs/heads/${branch}`
@@ -23,6 +23,22 @@ function deleteMrBranchDryRunCommands(mrBranch: string, options: DryRunOptions):
           label: `删除远程 MR 分支 origin/${mrBranch}`,
           command: 'git',
           args: ['push', 'origin', `:${remoteHeadRef(mrBranch)}`],
+        },
+      ]
+    : []
+}
+
+function requestCommandDryRunCommands(
+  sourceBranch: string,
+  targetBranch: string,
+  options: DryRunOptions,
+): DryRunCommand[] {
+  return options.requestCommand
+    ? [
+        {
+          label: `运行合并请求命令 ${sourceBranch} -> ${targetBranch}`,
+          command: 'sh',
+          args: ['-c', options.requestCommand],
         },
       ]
     : []
@@ -70,11 +86,7 @@ export function buildDetachedPlumbingDryRunCommands(
         `COMMIT_OID:${remoteHeadRef(mrBranch)}`,
       ],
     },
-    {
-      label: `创建合并请求 ${mrBranch} -> ${targetBranch}`,
-      command: 'git',
-      args: ['cnb', 'pull', 'create', '-H', mrBranch, '-B', targetBranch],
-    },
+    ...requestCommandDryRunCommands(mrBranch, targetBranch, options),
   ]
 }
 
@@ -112,11 +124,7 @@ export function buildDetachedWorktreeDryRunCommands(
           ? ['rebase', '--onto', `origin/${targetBranch}`, 'MERGE_BASE', mrBranch]
           : ['merge', '--no-edit', currentBranch],
     },
-    {
-      label: `创建合并请求 ${mrBranch} -> ${targetBranch}`,
-      command: 'git',
-      args: ['cnb', 'pull', 'create', '-H', mrBranch, '-B', targetBranch],
-    },
+    ...requestCommandDryRunCommands(mrBranch, targetBranch, options),
   ]
 }
 
@@ -139,11 +147,7 @@ export function buildDetachedDryRunCommands(
         command: 'git',
         args: ['push', '--set-upstream', 'origin', `HEAD:${currentBranch}`],
       },
-      {
-        label: `创建合并请求 ${currentBranch} -> ${targetBranch}`,
-        command: 'git',
-        args: ['cnb', 'pull', 'create', '-H', currentBranch, '-B', targetBranch],
-      },
+      ...requestCommandDryRunCommands(currentBranch, targetBranch, options),
     ]
   }
 

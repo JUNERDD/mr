@@ -273,13 +273,4 @@ export async function ensureGitContext(context: any) {
       next: ['添加 origin 后重试，例如: git remote add origin <repo-url>'],
     })
   }
-
-  const cnbCheck = await git(['cnb', '-h'], context, { quiet: true, allowFailure: true })
-  const cnbOutput = cnbCheck.all ?? ''
-  if (cnbCheck.exitCode !== 0 && /not a git command|不是 git 命令|No manual entry/u.test(cnbOutput)) {
-    throw new CliError('未检测到 git cnb 命令。', {
-      details: compactOutput(cnbOutput),
-      next: ['安装并登录 CNB Git 扩展后重试。', '确认 git cnb -h 可以正常执行。'],
-    })
-  }
 }

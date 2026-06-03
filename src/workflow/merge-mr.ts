@@ -9,28 +9,13 @@ import {
   isAncestor,
   remoteBranchExists,
 } from '../git/client.js'
-import { run } from '../runtime/runner.js'
 import { deleteRemoteMrBranchIfRequested } from './delete-mr-branch.js'
 import { getActiveMrMerge, resumeActiveMrMerge } from './merge-resume.js'
+import { type PullRequestResult, createPullRequest, requestCompletionLines } from './mr-steps.js'
 import { restoreInitialBranch, withRecoveryDetails } from './recovery.js'
 
 class MergeConflictError extends CliError {}
 type CreateMrByMergeOptions = { existingOnly?: boolean }
-
-async function createPullRequest(
-  mrBranch: string,
-  targetBranch: string,
-  context: any,
-  { allowFailure = false, labelPrefix = '创建合并请求' } = {},
-) {
-  return run('git', ['cnb', 'pull', 'create', '-H', mrBranch, '-B', targetBranch], {
-    label: `${labelPrefix} ${mrBranch} -> ${targetBranch}`,
-    allowFailure,
-    showOutput: true,
-    mutates: true,
-    context,
-  })
-}
 
 export async function createMrByMerge(
   targetBranch: string,
@@ -47,7 +32,7 @@ export async function createMrByMerge(
   const currentBranch = await getCurrentBranch(context)
 
   if (context.dryRun) {
-    printDryRun(targetBranch, currentBranch, context, 'merge')
+    await printDryRun(targetBranch, currentBranch, context, 'merge')
     const status = await getTrackedWorkingTreeStatus(context)
     if (status) {
       ui.status('warn', '工作区存在 tracked 改动；真实执行会先停止。')
@@ -58,6 +43,7 @@ export async function createMrByMerge(
 
   await ensureCleanWorkingTree(context)
   const mrBranch = mrBranchName(targetBranch, currentBranch)
+  let requestResult: PullRequestResult | undefined
 
   ui.panel('mr  合并请求', [`目标分支  ${targetBranch}`, `当前分支  ${currentBranch}`, `MR 分支   ${mrBranch}`])
 
@@ -99,7 +85,7 @@ export async function createMrByMerge(
     await prepareLocalMrBranch(mrBranch, targetBranch, existingMr.exists, context)
     await mergeCurrentBranch(mrBranch, currentBranch, targetBranch, requestCreated, context)
     await mergeTargetBranch(mrBranch, targetBranch, context)
-    await pushAndEnsureRequest(mrBranch, targetBranch, requestCreated, context)
+    requestResult = await pushAndEnsureRequest(mrBranch, targetBranch, requestCreated, context)
     await git(['switch', currentBranch], context, { label: `回到 ${currentBranch}`, mutates: true })
   } catch (error) {
     if (error instanceof MergeConflictError) {
@@ -110,7 +96,9 @@ export async function createMrByMerge(
     throw withRecoveryDetails(error, recovery)
   }
 
-  ui.panel('完成', [`合并请求  ${mrBranch} -> ${targetBranch}`, `已回到    ${currentBranch}`], { tone: 'success' })
+  ui.panel('完成', [...requestCompletionLines(mrBranch, targetBranch, requestResult), `已回到    ${currentBranch}`], {
+    tone: 'success',
+  })
   return true
 }
 
@@ -162,13 +150,20 @@ async function createInitialRequestIfNeeded(
     return false
   }
 
-  context.ui.step('合并请求', `创建合并请求: ${mrBranch} -> ${targetBranch}。`)
-  const result = await createPullRequest(mrBranch, targetBranch, context, { allowFailure: true })
-  if (result.exitCode === 0) {
+  context.ui.step('合并请求', `处理合并请求: ${mrBranch} -> ${targetBranch}。`)
+  const result = await createPullRequest(mrBranch, targetBranch, context, {
+    allowFailure: true,
+    promptWhenMissing: false,
+  })
+  if (result.exitCode === 0 && !result.skipped) {
     return true
   }
 
-  context.ui.status('warn', '合并请求创建未成功，可能已存在或当前无差异；推送后会重试。')
+  if (result.skipped) {
+    return false
+  }
+
+  context.ui.status('warn', '合并请求命令未成功；推送后会重试。')
   return false
 }
 
@@ -221,7 +216,7 @@ async function mergeCurrentBranch(
     `然后重新运行: mr ${targetBranch}`,
   ]
   if (!requestCreated) {
-    next.push(`或手动创建合并请求: git cnb pull create -H ${mrBranch} -B ${targetBranch}`)
+    next.push(`或推送后在 Git 平台手动创建合并请求: ${mrBranch} -> ${targetBranch}`)
   }
 
   throw new MergeConflictError(`合并 ${currentBranch} 到 ${mrBranch} 时发生冲突。`, {
@@ -266,7 +261,12 @@ async function mergeTargetBranch(mrBranch: string, targetBranch: string, context
   })
 }
 
-async function pushAndEnsureRequest(mrBranch: string, targetBranch: string, requestCreated: boolean, context: any) {
+async function pushAndEnsureRequest(
+  mrBranch: string,
+  targetBranch: string,
+  requestCreated: boolean,
+  context: any,
+): Promise<PullRequestResult | undefined> {
   context.ui.step('推送', `推送 ${mrBranch}，更新远程 MR 分支。`)
   await git(['push', 'origin', `HEAD:${mrBranch}`], context, {
     label: `推送 ${mrBranch}`,
@@ -280,7 +280,10 @@ async function pushAndEnsureRequest(mrBranch: string, targetBranch: string, requ
       labelPrefix: '确认合并请求',
     })
     if (result.exitCode !== 0) {
-      context.ui.status('warn', '合并请求创建未成功，可能已存在；MR 分支已推送。')
+      context.ui.status('warn', '合并请求命令未成功；MR 分支已推送。')
     }
+    return result
   }
+
+  return undefined
 }

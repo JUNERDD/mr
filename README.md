@@ -318,6 +318,8 @@ flowchart TD
 - 错误会给出可执行的下一步，例如缺少依赖、目标分支不存在、工作区不干净或合并冲突。
 - 颜色遵循 `NO_COLOR`、`MR_NO_COLOR`、`FORCE_COLOR`、`TERM=dumb` 和 `--no-color` / `--color`。
 - 非 TTY 或 CI 环境自动禁用动画，避免日志被 spinner 刷屏。
+- 交互式终端中会按 24 小时缓存检查一次 GitHub latest release；发现新版本时在 stderr 提示 `mr --update`。`--quiet`、CI、非 TTY、`mr --update`、`mr --uninstall`、帮助和版本输出会跳过检查，网络失败会静默忽略。
+- 需要关闭新版本自动检查时，设置 `MR_NO_UPDATE_CHECK=1`；兼容通用关闭变量 `NO_UPDATE_NOTIFIER=1`。
 
 运行耗时命令时，交互式终端会显示单行 ASCII spinner；非 TTY、CI、`TERM=dumb`、无颜色输出或 `--no-spinner` 时降级为稳定文本状态：
 

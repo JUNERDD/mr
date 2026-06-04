@@ -33,6 +33,7 @@ export const description = `从目标分支准备通用 Git 合并请求分支�
 环境变量:
   NO_COLOR=1                 禁用颜色
   MR_NO_COLOR=1              仅对 mr 禁用颜色
+  MR_NO_UPDATE_CHECK=1       禁用自动新版本检查
   FORCE_COLOR=1              强制颜色
   DEBUG=mr                   等同于 --verbose`
 

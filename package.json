@@ -1,6 +1,6 @@
 {
   "name": "mr",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Generic Git merge request branch helper CLI.",
   "keywords": [
     "cli",

@@ -105,7 +105,7 @@ export function buildDetachedWorktreeDryRunCommands(
     },
     ...deleteMrBranchDryRunCommands(mrBranch, options),
     {
-      label: `在临时 worktree 准备 ${mrBranch}（冲突或 ${strategy} 策略）`,
+      label: `在 detached worktree 准备 ${mrBranch}（冲突或 ${strategy} 策略）`,
       command: 'git',
       args: [
         'worktree',

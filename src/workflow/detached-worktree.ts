@@ -1,10 +1,6 @@
-import { createHash } from 'node:crypto'
-import { mkdir } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { CliError } from '../core/errors.js'
 import { fetchRemoteBranch, git, gitOutput, remoteBranchExists } from '../git/client.js'
-import { addWorktree, getRepositoryTopLevel, listWorktrees, removeWorktree } from '../git/worktree.js'
+import { addWorktree, listWorktrees, removeWorktree } from '../git/worktree.js'
 import { getActiveMrMerge } from './merge-resume.js'
 import {
   createPullRequest,
@@ -21,6 +17,7 @@ import {
 import { resumeDetachedMrMerge, resumeDetachedMrRebase } from './detached-worktree-resume.js'
 import { getActiveMrRebase } from './rebase-resume.js'
 import type { MrStrategy } from '../core/settings.js'
+import { resolveDetachedWorktreePath } from './worktree-dir.js'
 
 export async function resumeDetachedConflictIfAny(targetBranch: string, context: any): Promise<boolean> {
   const prefix = `mr/${targetBranch}/`
@@ -89,12 +86,11 @@ export async function runStrategyInWorktree(
   context: any,
   { currentBranch, mrBranch }: { currentBranch: string; mrBranch: string },
 ): Promise<PullRequestResult> {
-  const worktreePath = await resolveWorktreePath(mrBranch, context)
+  const worktreePath = await resolveDetachedWorktreePath(mrBranch, context)
   const existing = (await listWorktrees(context)).find((w) => w.path === worktreePath)
 
   if (!existing) {
     const startPoint = await worktreeStartPoint(strategy, targetBranch, currentBranch, mrBranch, context)
-    await mkdir(join(tmpdir(), 'mr-worktrees'), { recursive: true })
     context.ui.step('worktree', `在 ${worktreePath} 准备 ${mrBranch}。`)
     await addWorktree(worktreePath, mrBranch, startPoint, context)
   }
@@ -237,13 +233,6 @@ async function createRemoteMrBranchFromTarget(mrBranch: string, targetBranch: st
     label: `推送 ${mrBranch}`,
     mutates: true,
   })
-}
-
-async function resolveWorktreePath(mrBranch: string, context: any) {
-  const top = await getRepositoryTopLevel(context)
-  const hash = createHash('sha256').update(top).digest('hex').slice(0, 8)
-  const safe = mrBranch.replace(/[^a-zA-Z0-9._-]+/gu, '_')
-  return join(tmpdir(), 'mr-worktrees', `${hash}-${safe}`)
 }
 
 async function getCurrentBranchSafe(context: any) {

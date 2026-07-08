@@ -247,7 +247,9 @@ export async function printDryRun(
       detached ? `模式      detached` : null,
       '',
       ui.colors.dim(
-        detached ? '不会切换本地分支；不要求工作区干净；冲突时可能使用临时 worktree。' : '不会修改本地分支或远程分支。',
+        detached
+          ? '不会切换本地分支；不要求工作区干净；冲突时可能使用 detached worktree。'
+          : '不会修改本地分支或远程分支。',
       ),
     ].filter((line): line is string => line !== null),
   )

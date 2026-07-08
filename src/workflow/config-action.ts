@@ -26,6 +26,7 @@ import {
 } from '../core/request-command.js'
 import { type ConfigSelection, assertConfigInteractiveTerminal } from '../ui/config.js'
 import { printSettings } from './config-output.js'
+import { readWorktreeDirSettings } from './worktree-dir.js'
 
 export type ConfigCommandOptions = {
   color?: boolean
@@ -61,6 +62,7 @@ export async function runConfigAction(
       await readMrSettings(context),
       await readDetachedSettings(context),
       await readRequestCommandSettings(context),
+      await readWorktreeDirSettings(context),
       context,
     )
     return true
@@ -82,6 +84,7 @@ export async function runConfigAction(
       await readMrSettings(context),
       await readDetachedSettings(context),
       await readRequestCommandSettings(context),
+      await readWorktreeDirSettings(context),
       context,
     )
     return true
@@ -142,6 +145,7 @@ async function unsetRequestConfig(options: ConfigCommandOptions, context: Return
     await readMrSettings(context),
     await readDetachedSettings(context),
     await readRequestCommandSettings(context),
+    await readWorktreeDirSettings(context),
     context,
   )
 }

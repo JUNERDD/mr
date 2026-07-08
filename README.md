@@ -108,12 +108,12 @@ curl -fsSL https://raw.githubusercontent.com/JUNERDD/mr/main/install.sh | bash
 - 远程 MR 分支检查使用完整 `refs/heads/<branch>` 精确匹配；如果检查后拉取 MR 分支时远端分支已消失，会按“不存在”继续创建或重新生成。
 - 默认 `mr.requestProvider=auto`：MR 分支或当前分支推送完成后，会按 `origin` 自动识别 CNB/GitHub/GitLab 并执行对应 provider 预设；无法识别或 provider 为 `none` 时，只提示在 Git 平台手动创建合并请求。
 - `--pr`：不创建 `mr/*` 分支，直接推送当前分支作为请求源；如果 provider 或自定义命令可用，则用当前分支和目标分支处理合并请求。
-- 默认无感 merge / merge-target 冲突：进入临时 `git worktree`；在 worktree 内解决冲突并 `git add <files>` 后，回到主仓库重新运行 `mr <target> --detached` / `mrt --detached` 自动 resume、推送、处理合并请求并清理 worktree。
+- 默认无感 merge / merge-target 冲突：进入 detached `git worktree`；默认根目录为系统临时目录，也可用 `MR_WORKTREE_DIR` 或 `mr.worktreeDir` 指到当前仓库内以便 IDE 源代码管理发现；在 worktree 内解决冲突并 `git add <files>` 后，回到主仓库重新运行 `mr <target> --detached` / `mrt --detached` 自动 resume、推送、处理合并请求并清理 worktree。
 - 传统模式 merge 冲突：处于 MR 分支的待解决冲突状态；解决后 `git add <files>`，再重新运行 `mr <target> --no-detached` / `mrt --no-detached` 提交合并结果、推送并处理合并请求。
 - `--rebase`：从当前分支准备 MR 分支，再 rebase 到目标分支。
 - `--merge-target`：从当前分支准备 MR 分支，再把目标分支 merge 进去。
 - `--pr` 和三种 MR 分支策略都适用于 `mr` 交互式选择、`mrm`、`mrt`、`mrp` 和 `mr <target>`；也可通过 `mr --config`、`git config mr.strategy pr|merge|rebase|merge-target` 或 `MR_STRATEGY=...` 设置默认策略。
-- `--detached`：显式开启默认无感模式，正交于策略。happy path 用 `merge-tree` / `commit-tree` 推送 `mr/*` 分支，不切换本地分支、不要求 tracked 工作区干净；`--rebase` 或发生冲突时回退到临时 `git worktree`，在 worktree 内解决冲突后回到主仓库重跑 `mr <target> --detached` 自动 resume 并清理 worktree。
+- `--detached`：显式开启默认无感模式，正交于策略。happy path 用 `merge-tree` / `commit-tree` 推送 `mr/*` 分支，不切换本地分支、不要求 tracked 工作区干净；`--rebase` 或发生冲突时回退到 detached `git worktree`，在 worktree 内解决冲突后回到主仓库重跑 `mr <target> --detached` 自动 resume 并清理 worktree。
 - `--pr` 在 detached 下本就无需切分支，行为与 `--pr` 一致。
 - 传统内联模式的其他中途失败：自动尝试回到初始分支。
 - 传统内联模式（`--no-detached` 或 `mr.detached=false`）要求 tracked 工作区干净，避免切换分支时带入未提交改动。
@@ -138,6 +138,32 @@ curl -fsSL https://raw.githubusercontent.com/JUNERDD/mr/main/install.sh | bash
 3. 当前仓库 `git config mr.detached true|false`
 4. 全局用户 `git config --global mr.detached true|false`
 5. 内置默认 `true`
+
+detached 冲突 worktree 根目录默认是系统临时目录下的 `mr-worktrees`。如果希望 VS Code、Cursor 等 IDE 的源代码管理面板更容易发现冲突 worktree，可把目录配置到当前仓库内部：
+
+```sh
+git config mr.worktreeDir .mr-worktrees
+```
+
+也可用环境变量或全局配置：
+
+```sh
+MR_WORKTREE_DIR=.mr-worktrees mr test
+git config --global mr.worktreeDir .mr-worktrees
+```
+
+`MR_WORKTREE_DIR` 优先于当前仓库 `mr.worktreeDir`，当前仓库配置优先于全局配置。相对路径按仓库根目录解析。目录在仓库内部时，`mr` 会把该目录写入本地 `.git/info/exclude`，避免主仓库出现未跟踪的 `.mr-worktrees/`。
+
+VS Code 对外部工具已创建的 worktree 依赖自己的发现设置。建议在 VS Code / Cursor 中启用：
+
+```json
+{
+  "git.detectWorktrees": true,
+  "scm.alwaysShowRepositories": true
+}
+```
+
+如果 worktree 很多，再检查或调高 `git.detectWorktreesLimit`。
 
 标准 Git 没有统一的 PR/MR 创建命令；`mr` 默认只依赖 Git 完成分支准备和推送，合并请求创建通过 provider CLI 预设或自定义命令补齐。
 
@@ -208,7 +234,7 @@ mr --config --no-detached
 mr --config --global --detached
 ```
 
-`mr --config --show` 会展示当前有效策略、detached 设置、provider 和合并请求命令；`mr --config --unset` 会清除所选作用域的 `mr.strategy` 和 `mr.detached`，不会删除已有的 `mr.requestProvider` 或 `mr.requestCommand`。需要禁用内置 provider 时使用 `mr --config --request-provider none`；需要删除自定义请求命令或 provider 时使用 `mr --config --unset-request-command` / `mr --config --unset-request-provider`。
+`mr --config --show` 会展示当前有效策略、detached 设置、detached worktree 目录、provider 和合并请求命令；`mr --config --unset` 会清除所选作用域的 `mr.strategy` 和 `mr.detached`，不会删除已有的 `mr.requestProvider`、`mr.requestCommand` 或 `mr.worktreeDir`。需要禁用内置 provider 时使用 `mr --config --request-provider none`；需要删除自定义请求命令或 provider 时使用 `mr --config --unset-request-command` / `mr --config --unset-request-provider`。
 
 ## 分支逻辑图
 
@@ -294,11 +320,11 @@ flowchart TD
   D1 -- "是" --> D2["worktree 内 resume<br/>push + 处理请求 + 删除 worktree"]
   D1 -- "否" --> D3{"策略"}
   D3 -- "pr" --> D4["push B + 处理请求"]
-  D3 -- "rebase" --> D5["临时 worktree 变基"]
+  D3 -- "rebase" --> D5["detached worktree 变基"]
   D3 -- "merge / merge-target" --> D6["merge-tree 内存合并"]
   D6 --> D7{"冲突?"}
   D7 -- "否" --> D8["commit-tree + push OID + 处理请求"]
-  D7 -- "是" --> D9["临时 worktree 真实 merge<br/>解决后重跑 mr --detached"]
+  D7 -- "是" --> D9["detached worktree 真实 merge<br/>解决后重跑 mr --detached"]
 ```
 
 ## UI / DX
@@ -306,7 +332,7 @@ flowchart TD
 - `mr -h`、`mr -help`、`mr --help` 都展示 Pastel 根据 Zod schema 生成的参数、选项和版本信息。
 - Pastel 会给布尔 flag 展示默认值；`--dry-run` 等显示“关闭”表示该 flag 默认不启用，`--merge` / `--rebase` / `--merge-target` 显示的是“是否临时覆盖策略”，真正的默认策略由 `mr --config` 决定，内置默认是 `merge`；无感模式的内置默认是开启，`--no-detached` 用于临时关闭。
 - `mr` 会进入 Ink 键盘交互选择，支持上下键、数字键 `1-3`、回车确认、`q` 或 `Ctrl-C` 取消。
-- `mr --config` 会进入 Ink 键盘交互设置，先选择写入当前仓库还是全局用户配置，再选择默认策略、无感模式和请求 provider；脚本环境可用 `mr --config --strategy rebase`、`mr --config --request-provider github`、`mr --config --request-command '...'`、`mr --config --global --strategy pr`、`mr --config --show` 或 `mr --config --unset`。
+- `mr --config` 会进入 Ink 键盘交互设置，先选择写入当前仓库还是全局用户配置，再选择默认策略、无感模式和请求 provider；脚本环境可用 `mr --config --strategy rebase`、`mr --config --request-provider github`、`mr --config --request-command '...'`、`mr --config --global --strategy pr`、`mr --config --show` 或 `mr --config --unset`。`mr --config --show` 也会显示当前 detached worktree 目录和来源。
 - `mr --update` 会重新执行已安装的 `install.sh`，下载最新 release 预构建产物并覆盖当前安装。
 - `mr --uninstall` 会执行已安装的 `uninstall.sh`，删除命令链接、安装目录和 shell 配置片段。
 - 如果旧安装目录只有 `dist/` 而缺少 `install.sh` / `uninstall.sh`，`--update` / `--uninstall` 会回退到 GitHub 上的官方脚本，并沿用当前安装目录和命令目录。

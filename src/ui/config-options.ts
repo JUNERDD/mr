@@ -10,7 +10,7 @@ import {
 
 export const DETACHED_CHOICES = [
   { value: false, label: '关闭', description: '默认切换本地 MR 分支（内联模式）' },
-  { value: true, label: '开启', description: '无感模式：不切本地分支，冲突时使用临时 worktree' },
+  { value: true, label: '开启', description: '无感模式：不切本地分支，冲突时使用 detached worktree' },
 ] as const
 
 const PROVIDER_CHOICES: Array<{ description: string; label: string; value: RequestProvider }> = [

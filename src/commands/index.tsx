@@ -34,6 +34,7 @@ export const description = `从目标分支准备通用 Git 合并请求分支�
   NO_COLOR=1                 禁用颜色
   MR_NO_COLOR=1              仅对 mr 禁用颜色
   MR_NO_UPDATE_CHECK=1       禁用自动新版本检查
+  MR_WORKTREE_DIR=.mr-worktrees  指定 detached 冲突 worktree 根目录
   FORCE_COLOR=1              强制颜色
   DEBUG=mr                   等同于 --verbose`
 
@@ -104,7 +105,7 @@ export const options = zod.object({
   mergeTarget: zod.boolean().describe(describedFlag('临时覆盖为 merge-target 策略', '未指定')),
   detached: zod
     .boolean()
-    .describe(describedFlag('显式开启无感模式：不切本地分支，用 plumbing 或临时 worktree 准备 MR', '未指定')),
+    .describe(describedFlag('显式开启无感模式：不切本地分支，用 plumbing 或 detached worktree 准备 MR', '未指定')),
   noDetached: zod.boolean().optional().describe(describedFlag('临时使用传统切分支模式', '未指定')),
   rmMr: zod.boolean().describe(describedFlag('执行 MR 分支策略前先删除对应远程 MR 分支')),
 })

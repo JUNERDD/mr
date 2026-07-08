@@ -36,6 +36,7 @@ import { createSelectConfig, selectTarget } from '../src/ui/select-target.js'
 import { createUi, resolveColorEnabled } from '../src/ui/terminal.js'
 import { withRecoveryDetails } from '../src/workflow/recovery.js'
 import { resolveDetached, resolveMrStrategy } from '../src/workflow/strategy.js'
+import { readWorktreeDirSettings } from '../src/workflow/worktree-dir.js'
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 const execFileAsync = promisify(execFile)
@@ -349,6 +350,45 @@ test('readDetachedSettings reports effective detached by precedence', async () =
 
     const envSettings = await readDetachedSettings({ env: { MR_DETACHED: 'false' }, ui: createUi({ quiet: true }) })
     assert.equal(envSettings.effective, false)
+    assert.equal(envSettings.source, 'environment')
+  } finally {
+    process.chdir(originalCwd)
+    if (originalGlobalConfig === undefined) {
+      delete process.env.GIT_CONFIG_GLOBAL
+    } else {
+      process.env.GIT_CONFIG_GLOBAL = originalGlobalConfig
+    }
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('readWorktreeDirSettings reports effective worktree directory by precedence', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mr-worktree-dir-settings-'))
+  const repo = join(root, 'repo')
+  const globalConfig = join(root, 'global.gitconfig')
+  const originalCwd = process.cwd()
+  const originalGlobalConfig = process.env.GIT_CONFIG_GLOBAL
+
+  try {
+    await execFileAsync('git', ['init', repo])
+    process.env.GIT_CONFIG_GLOBAL = globalConfig
+    await execFileAsync('git', ['config', '--global', 'mr.worktreeDir', 'global-worktrees'])
+    await execFileAsync('git', ['config', 'mr.worktreeDir', '.mr-worktrees'], { cwd: repo })
+    process.chdir(repo)
+
+    const top = (await execFileAsync('git', ['rev-parse', '--show-toplevel'], { cwd: repo })).stdout.trim()
+    const settings = await readWorktreeDirSettings({ env: {}, ui: createUi({ quiet: true }) })
+    assert.equal(settings.effective, join(top, '.mr-worktrees'))
+    assert.equal(settings.source, 'local')
+    assert.equal(settings.global, join(top, 'global-worktrees'))
+    assert.equal(settings.local, join(top, '.mr-worktrees'))
+
+    const envDir = join(root, 'env-worktrees')
+    const envSettings = await readWorktreeDirSettings({
+      env: { MR_WORKTREE_DIR: envDir },
+      ui: createUi({ quiet: true }),
+    })
+    assert.equal(envSettings.effective, envDir)
     assert.equal(envSettings.source, 'environment')
   } finally {
     process.chdir(originalCwd)

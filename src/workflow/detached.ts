@@ -207,7 +207,7 @@ async function mergeAndCommit(base: string, incoming: string, message: string, c
   if (result.conflict) {
     throw new DetachedMergeConflictError(`合并 ${incoming} 到 ${base} 时发生冲突。`, {
       details: compactOutput(result.messages),
-      next: ['将切换到临时 worktree 继续处理冲突。'],
+      next: ['将切换到 detached worktree 继续处理冲突。'],
     })
   }
 

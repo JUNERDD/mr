@@ -6,6 +6,7 @@ import {
   getTrackedWorkingTreeStatus,
   git,
   isAncestor,
+  remoteFetchRefspec,
   remoteBranchExists,
 } from '../git/client.js'
 import { createPullRequest, requestCompletionLines } from './mr-steps.js'
@@ -64,7 +65,7 @@ export async function createPrFromCurrentBranch(targetBranch: string, context: a
 
 async function refreshTargetBranch(targetBranch: string, context: any) {
   context.ui.step('检查', `刷新目标分支 origin/${targetBranch}。`)
-  const result = await git(['fetch', 'origin', `+${targetBranch}:refs/remotes/origin/${targetBranch}`], context, {
+  const result = await git(['fetch', 'origin', remoteFetchRefspec(targetBranch)], context, {
     allowFailure: true,
     label: `刷新 origin/${targetBranch}`,
     mutates: true,

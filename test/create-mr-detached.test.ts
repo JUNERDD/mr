@@ -117,6 +117,7 @@ test('detached merge conflict uses worktree and resumes from main repo', async (
 
   try {
     const { repo } = await setupRepo(root, { conflicting: true })
+    await git(repo, ['config', 'mr.worktreeDir', '.mr-worktrees'])
     process.chdir(repo)
 
     const context = createContext({ detached: true, ui: quietUi() })
@@ -133,6 +134,12 @@ test('detached merge conflict uses worktree and resumes from main repo', async (
       ?.find((line) => line.startsWith('worktree '))
       ?.slice('worktree '.length)
     assert.ok(wtPath)
+    const top = await gitOutput(repo, ['rev-parse', '--show-toplevel'])
+    assert.ok(wtPath!.startsWith(join(top, '.mr-worktrees')))
+    assert.equal(await gitOutput(repo, ['status', '--short']), '')
+
+    const exclude = await readFile(join(repo, '.git', 'info', 'exclude'), 'utf8')
+    assert.match(exclude, /^\.mr-worktrees\/$/mu)
 
     await writeFile(join(wtPath!, 'file.txt'), 'feature\n')
     await git(wtPath!, ['add', 'file.txt'])

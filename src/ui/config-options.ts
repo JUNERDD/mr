@@ -17,6 +17,7 @@ const PROVIDER_CHOICES: Array<{ description: string; label: string; value: Reque
   { value: 'auto', label: 'auto', description: '按 origin 自动识别 CNB / GitHub / GitLab' },
   { value: 'none', label: 'none', description: '只推送分支，手动创建合并请求' },
   { value: 'cnb', label: 'cnb', description: '使用 git cnb pull create' },
+  { value: 'cnb-oauth', label: 'cnb-oauth', description: '使用 cnb CLI 的 OAuth 登录创建（cnb login）' },
   { value: 'github', label: 'github', description: '使用 gh pr create' },
   { value: 'gitlab', label: 'gitlab', description: '使用 glab mr create' },
 ]

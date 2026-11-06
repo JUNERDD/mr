@@ -3,7 +3,7 @@ import { type ConfigScope, isGitWorkTree, scopeLabel } from './settings.js'
 import { git, gitOutput } from '../git/client.js'
 import { run } from '../runtime/runner.js'
 
-export const REQUEST_PROVIDER_VALUES = ['auto', 'none', 'cnb', 'github', 'gitlab'] as const
+export const REQUEST_PROVIDER_VALUES = ['auto', 'none', 'cnb', 'cnb-oauth', 'github', 'gitlab'] as const
 
 export type RequestProvider = (typeof REQUEST_PROVIDER_VALUES)[number]
 export type RequestProviderSource = 'environment' | 'local' | 'global' | 'builtin'
@@ -23,8 +23,23 @@ export type RequestCommandSettings = {
   source: RequestCommandSource
 }
 
+// Creates the CNB request through the `cnb` CLI's saved OAuth login (`cnb login --host cnb.cool`), so it needs no
+// shell wrapper or exported token. Inherited CNB_* variables are removed for the child because the CLI prefers them
+// over its saved login. Once the POST succeeded, a response that cannot be parsed is only echoed, never turned into
+// a failure, so a retry cannot create a duplicate request.
+const CNB_OAUTH_COMMAND = [
+  'origin=$(git remote get-url origin) || exit 1',
+  'case "$origin" in',
+  '  https://cnb.cool/*) repo=${origin#https://cnb.cool/}; repo=${repo%/}; repo=${repo%.git} ;;',
+  '  *) echo "cnb-oauth 只支持 https://cnb.cool/ 开头的 origin，当前: $origin" >&2; exit 1 ;;',
+  'esac',
+  'response=$(env -u CNB_TOKEN -u CNB_TOKEN_FOR_CODEBUDDY -u CNB_API_ENDPOINT cnb pulls post-pull --verbose --repo "$repo" --head "$MR_SOURCE_BRANCH" --base "$MR_TARGET_BRANCH" --title "$MR_SOURCE_BRANCH -> $MR_TARGET_BRANCH") || { printf \'%s\\n\' "$response" >&2; exit 1; }',
+  'printf \'%s\\n\' "$response" | node -e \'const r=JSON.parse(require("fs").readFileSync(0,"utf8"));const n=r.data&&r.data.number;if(!(r.status>=200&&r.status<300&&/^[1-9][0-9]*$/.test(String(n))))process.exit(1);console.log("https://cnb.cool/"+process.argv[1]+"/-/pulls/"+n)\' "$repo" || printf \'%s\\n\' "$response" >&2',
+].join('\n')
+
 const PROVIDER_COMMANDS: Record<ProviderPreset, string> = {
   cnb: 'git cnb pull create -H "$MR_SOURCE_BRANCH" -B "$MR_TARGET_BRANCH"',
+  'cnb-oauth': CNB_OAUTH_COMMAND,
   github: 'gh pr create --fill --head "$MR_SOURCE_BRANCH" --base "$MR_TARGET_BRANCH"',
   gitlab: 'glab mr create --fill --source-branch "$MR_SOURCE_BRANCH" --target-branch "$MR_TARGET_BRANCH"',
 }
@@ -153,7 +168,7 @@ export function normalizeRequestProvider(value: string): RequestProvider {
   }
 
   throw new CliError(`不支持的请求 provider: ${value}`, {
-    next: ['可选值: auto, none, cnb, github, gitlab'],
+    next: ['可选值: auto, none, cnb, cnb-oauth, github, gitlab'],
   })
 }
 

@@ -174,15 +174,27 @@ VS Code 对外部工具已创建的 worktree 依赖自己的发现设置。建�
 - GitLab remote：如果环境中可用 `glab`，执行 `glab mr create`。
 - 无法识别或 provider 为 `none`：只用标准 Git 推送分支，并提示在 Git 平台手动创建合并请求。
 
-需要固定 provider 时，配置 `mr.requestProvider` 或 `MR_REQUEST_PROVIDER`；固定为 `cnb`、`github` 或 `gitlab` 会直接使用对应预设，不再按 remote 重新判断：
+需要固定 provider 时，配置 `mr.requestProvider` 或 `MR_REQUEST_PROVIDER`；固定为 `cnb`、`cnb-oauth`、`github` 或 `gitlab` 会直接使用对应预设，不再按 remote 重新判断：
 
 ```text
 auto
 none
 cnb
+cnb-oauth
 github
 gitlab
 ```
+
+`cnb-oauth` 是 CNB 的另一种创建方式：不依赖 `git cnb`，而是调用 `cnb` CLI 已保存的 OAuth 登录（先执行一次 `cnb login --host cnb.cool`）创建合并请求，成功后输出 `https://cnb.cool/<仓库>/-/pulls/<编号>`。它不需要 shell 包装函数或导出 Token，任何环境直接运行 `mr` 都行；`auto` 不会选它，需要显式设置：
+
+```sh
+mr --config --global --request-provider cnb-oauth
+```
+
+- 只支持 `origin` 以 `https://cnb.cool/` 开头的仓库，否则报错退出。
+- 调用 `cnb` 时会去掉继承来的 `CNB_TOKEN`、`CNB_TOKEN_FOR_CODEBUDDY`、`CNB_API_ENDPOINT`，因为它们的优先级高于已保存的登录。
+- 请求已创建成功但无法解析响应时，只回显原始响应并仍然视为成功，避免重试产生重复请求。
+- 自定义命令和 `MR_REQUEST_COMMAND` 优先级更高：如果某个仓库里残留旧的 `mr.requestCommand`，它会盖过 provider，用 `mr --config --show` 查看，再用 `mr --config --unset-request-command` 清除。
 
 需要完全自定义命令时，配置 `mr.requestCommand` 或 `MR_REQUEST_COMMAND`；自定义命令优先级高于 provider 预设。命令会通过 `sh -c` 执行，并获得以下环境变量：
 
@@ -194,7 +206,7 @@ gitlab
 1. `MR_REQUEST_COMMAND='...'`
 2. 当前仓库 `git config mr.requestCommand '...'`
 3. 全局用户 `git config --global mr.requestCommand '...'`
-4. `MR_REQUEST_PROVIDER=auto|none|cnb|github|gitlab`
+4. `MR_REQUEST_PROVIDER=auto|none|cnb|cnb-oauth|github|gitlab`
 5. 当前仓库 `git config mr.requestProvider ...`
 6. 全局用户 `git config --global mr.requestProvider ...`
 7. 内置默认 `auto`
@@ -205,6 +217,7 @@ gitlab
 git config --global mr.requestProvider github
 git config --global mr.requestProvider gitlab
 git config --global mr.requestProvider cnb
+git config --global mr.requestProvider cnb-oauth
 git config --global mr.requestProvider none
 git config --global mr.requestCommand 'gh pr create --fill --head "$MR_SOURCE_BRANCH" --base "$MR_TARGET_BRANCH"'
 git config --global mr.requestCommand 'glab mr create --fill --source-branch "$MR_SOURCE_BRANCH" --target-branch "$MR_TARGET_BRANCH"'

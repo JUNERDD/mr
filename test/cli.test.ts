@@ -140,7 +140,7 @@ test('createStrategyChoices exposes all MR strategies', () => {
 test('createProviderChoices exposes request provider presets', () => {
   assert.deepEqual(
     createProviderChoices().map((choice) => choice.value),
-    ['auto', 'none', 'cnb', 'github', 'gitlab'],
+    ['auto', 'none', 'cnb', 'cnb-oauth', 'github', 'gitlab'],
   )
 })
 
@@ -552,6 +552,135 @@ test('readRequestCommandSettings supports provider presets and auto-detects repo
     assert.equal(cnb.effective, 'git cnb pull create -H "$MR_SOURCE_BRANCH" -B "$MR_TARGET_BRANCH"')
     assert.equal(cnb.provider, 'cnb')
     assert.equal(cnb.source, 'auto')
+  } finally {
+    process.chdir(originalCwd)
+    if (originalPath === undefined) {
+      delete process.env.PATH
+    } else {
+      process.env.PATH = originalPath
+    }
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('cnb-oauth provider resolves to the OAuth preset without changing auto detection', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mr-request-command-cnb-oauth-'))
+  const repo = join(root, 'repo')
+  const bin = join(root, 'bin')
+  const originalCwd = process.cwd()
+  const originalPath = process.env.PATH
+
+  try {
+    await mkdir(bin)
+    await writeFile(join(bin, 'git-cnb'), ['#!/bin/sh', 'if [ "$1" = "-h" ]; then exit 0; fi', 'exit 1', ''].join('\n'))
+    await chmod(join(bin, 'git-cnb'), 0o755)
+    await execFileAsync('git', ['init', repo])
+    process.chdir(repo)
+    process.env.PATH = `${bin}:${originalPath ?? ''}`
+    await execFileAsync('git', ['remote', 'add', 'origin', 'https://cnb.cool/example/repo.git'])
+
+    const context = { env: {}, ui: createUi({ quiet: true }) }
+    const auto = await readRequestCommandSettings(context)
+    assert.equal(auto.effective, 'git cnb pull create -H "$MR_SOURCE_BRANCH" -B "$MR_TARGET_BRANCH"')
+    assert.equal(auto.provider, 'cnb')
+
+    await writeRequestProviderConfig('cnb-oauth', 'local', context)
+    const oauth = await readRequestCommandSettings(context)
+    assert.equal(oauth.provider, 'cnb-oauth')
+    assert.equal(oauth.source, 'auto')
+    assert.match(oauth.effective ?? '', /cnb pulls post-pull/u)
+
+    const fromEnv = await readRequestCommandSettings({ ...context, env: { MR_REQUEST_PROVIDER: 'CNB-OAuth' } })
+    assert.equal(fromEnv.provider, 'cnb-oauth')
+
+    await writeRequestCommandConfig('echo custom', 'local', context)
+    const custom = await readRequestCommandSettings(context)
+    assert.equal(custom.effective, 'echo custom')
+    assert.equal(custom.source, 'local')
+  } finally {
+    process.chdir(originalCwd)
+    if (originalPath === undefined) {
+      delete process.env.PATH
+    } else {
+      process.env.PATH = originalPath
+    }
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('cnb-oauth preset command creates the request through the cnb CLI', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mr-cnb-oauth-run-'))
+  const repo = join(root, 'repo')
+  const bin = join(root, 'bin')
+  const originalCwd = process.cwd()
+  const originalPath = process.env.PATH
+
+  try {
+    await mkdir(bin)
+    await writeFile(
+      join(bin, 'cnb'),
+      [
+        '#!/bin/sh',
+        'echo "$*" > "$FAKE_CNB_ARGS"',
+        'echo "${CNB_TOKEN-unset}|${CNB_API_ENDPOINT-unset}" > "$FAKE_CNB_ENV"',
+        'if [ "$FAKE_CNB_MODE" = fail ]; then echo \'{"status":401}\'; exit 3; fi',
+        'if [ "$FAKE_CNB_MODE" = weird ]; then echo "not json"; exit 0; fi',
+        'echo \'{"status":201,"data":{"number":"42"}}\'',
+        '',
+      ].join('\n'),
+    )
+    await chmod(join(bin, 'cnb'), 0o755)
+    await execFileAsync('git', ['init', repo])
+    await execFileAsync('git', ['remote', 'add', 'origin', 'https://cnb.cool/example/repo.git'], { cwd: repo })
+    process.chdir(repo)
+    process.env.PATH = `${bin}:${originalPath ?? ''}`
+
+    const context = { env: {}, ui: createUi({ quiet: true }) }
+    await writeRequestProviderConfig('cnb-oauth', 'local', context)
+    const command = (await readRequestCommandSettings(context)).effective
+    assert.ok(command)
+
+    const argsFile = join(root, 'args.txt')
+    const envFile = join(root, 'env.txt')
+    const execute = (mode: string) =>
+      execFileAsync('sh', ['-c', command], {
+        cwd: repo,
+        env: {
+          ...process.env,
+          CNB_API_ENDPOINT: 'https://stale.example',
+          CNB_TOKEN: 'secret',
+          FAKE_CNB_ARGS: argsFile,
+          FAKE_CNB_ENV: envFile,
+          FAKE_CNB_MODE: mode,
+          MR_SOURCE_BRANCH: 'feat/x',
+          MR_TARGET_BRANCH: 'test',
+        },
+      })
+
+    const created = await execute('ok')
+    assert.equal(created.stdout.trim(), 'https://cnb.cool/example/repo/-/pulls/42')
+    assert.equal(
+      (await readFile(argsFile, 'utf8')).trim(),
+      'pulls post-pull --verbose --repo example/repo --head feat/x --base test --title feat/x -> test',
+    )
+    assert.equal((await readFile(envFile, 'utf8')).trim(), 'unset|unset')
+
+    await assert.rejects(execute('fail'), (error: any) => {
+      assert.equal(error.code, 1)
+      assert.match(error.stderr, /"status":401/u)
+      return true
+    })
+
+    const weird = await execute('weird')
+    assert.equal(weird.stdout.trim(), '')
+    assert.match(weird.stderr, /not json/u)
+
+    await execFileAsync('git', ['remote', 'set-url', 'origin', 'https://github.com/example/repo.git'], { cwd: repo })
+    await assert.rejects(execute('ok'), (error: any) => {
+      assert.equal(error.code, 1)
+      assert.match(error.stderr, /cnb-oauth 只支持/u)
+      return true
+    })
   } finally {
     process.chdir(originalCwd)
     if (originalPath === undefined) {

@@ -1,7 +1,7 @@
 import { CliError } from './errors.js'
 import { type ConfigScope, isGitWorkTree, scopeLabel } from './settings.js'
 import { git, gitOutput } from '../git/client.js'
-import { run } from '../runtime/runner.js'
+import { resolveProviderPreset } from './request-provider.js'
 
 export const REQUEST_PROVIDER_VALUES = ['auto', 'none', 'cnb', 'cnb-oauth', 'github', 'gitlab'] as const
 
@@ -9,7 +9,7 @@ export type RequestProvider = (typeof REQUEST_PROVIDER_VALUES)[number]
 export type RequestProviderSource = 'environment' | 'local' | 'global' | 'builtin'
 export type RequestCommandSource = 'environment' | 'local' | 'global' | 'auto' | 'builtin'
 
-type ProviderPreset = Exclude<RequestProvider, 'auto' | 'none'>
+export type ProviderPreset = Exclude<RequestProvider, 'auto' | 'none'>
 
 export type RequestCommandSettings = {
   effective: string | null
@@ -26,7 +26,8 @@ export type RequestCommandSettings = {
 // Creates the CNB request through the `cnb` CLI's saved OAuth login (`cnb login --host cnb.cool`), so it needs no
 // shell wrapper or exported token. Inherited CNB_* variables are removed for the child because the CLI prefers them
 // over its saved login. Once the POST succeeded, a response that cannot be parsed is only echoed, never turned into
-// a failure, so a retry cannot create a duplicate request.
+// a failure, so a retry cannot create a duplicate request. Non-CNB origins never reach this command because the
+// provider falls back to auto detection; the origin check still rejects CNB origins that are not HTTPS URLs.
 const CNB_OAUTH_COMMAND = [
   'origin=$(git remote get-url origin) || exit 1',
   'case "$origin" in',
@@ -90,7 +91,10 @@ export async function readRequestCommandSettings(context: any): Promise<RequestC
 
   const preset = await resolveProviderPreset(providerSettings.effective, context)
   if (preset) {
-    return { ...base, effective: PROVIDER_COMMANDS[preset], provider: preset, source: 'auto' }
+    // Only `auto` reports the detected preset as its provider. An explicit provider keeps its configured value even
+    // when it falls back (cnb-oauth outside CNB), so `mr --config` does not preselect and save the fallback.
+    const provider = providerSettings.effective === 'auto' ? preset : providerSettings.effective
+    return { ...base, effective: PROVIDER_COMMANDS[preset], provider, source: 'auto' }
   }
 
   return { ...base, effective: null, source: 'builtin' }
@@ -226,73 +230,6 @@ async function readRequestProviderSettingsSafely(context: any, localAvailable: b
   } catch {
     return { effective: 'auto' as const, global: null, local: null, source: 'builtin' as const }
   }
-}
-
-async function resolveProviderPreset(provider: RequestProvider, context: any): Promise<ProviderPreset | null> {
-  if (provider === 'none') {
-    return null
-  }
-
-  if (provider !== 'auto') {
-    return provider
-  }
-
-  const origin = await readOriginUrl(context)
-  if (!origin) {
-    return null
-  }
-
-  if (isCnbRemote(origin) && (await hasGitSubcommand('cnb', context))) {
-    return 'cnb'
-  }
-
-  if (isGitHubRemote(origin) && (await hasExecutable('gh', context))) {
-    return 'github'
-  }
-
-  if (isGitLabRemote(origin) && (await hasExecutable('glab', context))) {
-    return 'gitlab'
-  }
-
-  return null
-}
-
-async function hasGitSubcommand(command: string, context: any) {
-  const result = await git([command, '-h'], context, { quiet: true, allowFailure: true })
-  if (result.exitCode === 0) {
-    return true
-  }
-
-  const output = result.all ?? ''
-  return Boolean(output && !/not a git command|不是 git 命令|No manual entry/u.test(output))
-}
-
-async function readOriginUrl(context: any) {
-  return (
-    (await gitOutput(['config', '--get', 'remote.origin.url'], context)) ??
-    (await gitOutput(['remote', 'get-url', 'origin'], context))
-  )
-}
-
-async function hasExecutable(command: string, context: any) {
-  const result = await run('sh', ['-c', `command -v ${command}`], {
-    allowFailure: true,
-    context,
-    quiet: true,
-  })
-  return result.exitCode === 0
-}
-
-function isCnbRemote(origin: string) {
-  return /(^|[/:@.])cnb\.cool([/:.]|$)/iu.test(origin)
-}
-
-function isGitHubRemote(origin: string) {
-  return /(^|[/:@.])github\.com([/:.]|$)/iu.test(origin)
-}
-
-function isGitLabRemote(origin: string) {
-  return /(^|[/:@.])gitlab\.com([/:.]|$)/iu.test(origin)
 }
 
 function scopeArg(scope: ConfigScope) {

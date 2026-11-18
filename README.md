@@ -174,7 +174,7 @@ VS Code 对外部工具已创建的 worktree 依赖自己的发现设置。建�
 - GitLab remote：如果环境中可用 `glab`，执行 `glab mr create`。
 - 无法识别或 provider 为 `none`：只用标准 Git 推送分支，并提示在 Git 平台手动创建合并请求。
 
-需要固定 provider 时，配置 `mr.requestProvider` 或 `MR_REQUEST_PROVIDER`；固定为 `cnb`、`cnb-oauth`、`github` 或 `gitlab` 会直接使用对应预设，不再按 remote 重新判断：
+需要固定 provider 时，配置 `mr.requestProvider` 或 `MR_REQUEST_PROVIDER`；固定为 `cnb`、`github` 或 `gitlab` 会直接使用对应预设，不再按 remote 重新判断；`cnb-oauth` 只在 CNB remote 上生效，其他 remote 按 `auto` 判断：
 
 ```text
 auto
@@ -185,13 +185,14 @@ github
 gitlab
 ```
 
-`cnb-oauth` 是 CNB 的另一种创建方式：不依赖 `git cnb`，而是调用 `cnb` CLI 已保存的 OAuth 登录（先执行一次 `cnb login --host cnb.cool`）创建合并请求，成功后输出 `https://cnb.cool/<仓库>/-/pulls/<编号>`。它不需要 shell 包装函数或导出 Token，任何环境直接运行 `mr` 都行；`auto` 不会选它，需要显式设置：
+`cnb-oauth` 是 CNB 的另一种创建方式：不依赖 `git cnb`，而是调用 `cnb` CLI 已保存的 OAuth 登录（先执行一次 `cnb login --host cnb.cool`）创建合并请求，成功后输出 `https://cnb.cool/<仓库>/-/pulls/<编号>`。它不需要 shell 包装函数或导出 Token，任何环境直接运行 `mr` 都行；`auto` 不会选它，需要显式设置，可以直接设为全局默认：
 
 ```sh
 mr --config --global --request-provider cnb-oauth
 ```
 
-- 只支持 `origin` 以 `https://cnb.cool/` 开头的仓库，否则报错退出。
+- `origin` 不是 CNB 仓库时自动退回 `auto` 判断：GitHub 用 `gh`、GitLab 用 `glab`，识别不到时只推送分支并提示手动创建，所以全局设置不会影响其他平台的仓库。
+- CNB 仓库需要 `origin` 以 `https://cnb.cool/` 开头；CNB 的 SSH 地址会报错退出，不会退回 `git cnb`。
 - 调用 `cnb` 时会去掉继承来的 `CNB_TOKEN`、`CNB_TOKEN_FOR_CODEBUDDY`、`CNB_API_ENDPOINT`，因为它们的优先级高于已保存的登录。
 - 请求已创建成功但无法解析响应时，只回显原始响应并仍然视为成功，避免重试产生重复请求。
 - 自定义命令和 `MR_REQUEST_COMMAND` 优先级更高：如果某个仓库里残留旧的 `mr.requestCommand`，它会盖过 provider，用 `mr --config --show` 查看，再用 `mr --config --unset-request-command` 清除。

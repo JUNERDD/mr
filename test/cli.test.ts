@@ -573,7 +573,12 @@ test('cnb-oauth provider resolves to the OAuth preset without changing auto dete
   try {
     await mkdir(bin)
     await writeFile(join(bin, 'git-cnb'), ['#!/bin/sh', 'if [ "$1" = "-h" ]; then exit 0; fi', 'exit 1', ''].join('\n'))
+    await writeFile(
+      join(bin, 'gh'),
+      ['#!/bin/sh', 'if [ "$1" = "--version" ]; then exit 0; fi', 'exit 1', ''].join('\n'),
+    )
     await chmod(join(bin, 'git-cnb'), 0o755)
+    await chmod(join(bin, 'gh'), 0o755)
     await execFileAsync('git', ['init', repo])
     process.chdir(repo)
     process.env.PATH = `${bin}:${originalPath ?? ''}`
@@ -592,6 +597,40 @@ test('cnb-oauth provider resolves to the OAuth preset without changing auto dete
 
     const fromEnv = await readRequestCommandSettings({ ...context, env: { MR_REQUEST_PROVIDER: 'CNB-OAuth' } })
     assert.equal(fromEnv.provider, 'cnb-oauth')
+
+    // `insteadOf` aliases are classified by their rewritten URL, the same one the OAuth command uses.
+    await execFileAsync('git', ['config', 'url.https://cnb.cool/.insteadOf', 'cnb:'])
+    await execFileAsync('git', ['remote', 'set-url', 'origin', 'cnb:example/repo.git'])
+    const cnbAlias = await readRequestCommandSettings(context)
+    assert.equal(cnbAlias.provider, 'cnb-oauth')
+    assert.match(cnbAlias.effective ?? '', /cnb pulls post-pull/u)
+    await execFileAsync('git', ['config', '--unset', 'url.https://cnb.cool/.insteadOf'])
+
+    // CNB SSH origins stay on cnb-oauth so the command reports that OAuth creation needs an HTTPS origin.
+    await execFileAsync('git', ['remote', 'set-url', 'origin', 'git@cnb.cool:example/repo.git'])
+    const cnbSsh = await readRequestCommandSettings(context)
+    assert.equal(cnbSsh.provider, 'cnb-oauth')
+    assert.match(cnbSsh.effective ?? '', /cnb pulls post-pull/u)
+
+    // Non-CNB origins fall back to auto detection instead of failing.
+    await execFileAsync('git', ['remote', 'set-url', 'origin', 'https://github.com/example/repo.git'])
+    const github = await readRequestCommandSettings(context)
+    assert.equal(github.effective, 'gh pr create --fill --head "$MR_SOURCE_BRANCH" --base "$MR_TARGET_BRANCH"')
+    // The configured provider stays visible so `mr --config` keeps cnb-oauth instead of saving the fallback.
+    assert.equal(github.provider, 'cnb-oauth')
+    assert.equal(github.providerSource, 'local')
+    assert.equal(github.source, 'auto')
+
+    await execFileAsync('git', ['remote', 'set-url', 'origin', 'https://example.com/example/repo.git'])
+    const unknown = await readRequestCommandSettings(context)
+    assert.equal(unknown.effective, null)
+    assert.equal(unknown.provider, 'cnb-oauth')
+    assert.equal(unknown.source, 'builtin')
+
+    await execFileAsync('git', ['remote', 'remove', 'origin'])
+    const noOrigin = await readRequestCommandSettings(context)
+    assert.equal(noOrigin.effective, null)
+    assert.equal(noOrigin.source, 'builtin')
 
     await writeRequestCommandConfig('echo custom', 'local', context)
     const custom = await readRequestCommandSettings(context)
@@ -675,7 +714,7 @@ test('cnb-oauth preset command creates the request through the cnb CLI', async (
     assert.equal(weird.stdout.trim(), '')
     assert.match(weird.stderr, /not json/u)
 
-    await execFileAsync('git', ['remote', 'set-url', 'origin', 'https://github.com/example/repo.git'], { cwd: repo })
+    await execFileAsync('git', ['remote', 'set-url', 'origin', 'git@cnb.cool:example/repo.git'], { cwd: repo })
     await assert.rejects(execute('ok'), (error: any) => {
       assert.equal(error.code, 1)
       assert.match(error.stderr, /cnb-oauth 只支持/u)
